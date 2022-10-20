@@ -328,7 +328,7 @@ FilterStatus Router::messageBegin(MessageMetadataSharedPtr metadata) {
 
   upstream_request_ = std::make_unique<UpstreamRequest>(
       *this, *upstream_req_info.conn_pool_data, metadata, upstream_req_info.transport,
-      upstream_req_info.protocol, close_downstream_on_error_);
+      upstream_req_info.protocol, close_downstream_on_error_, upstream_req_info.idle_timeout);
   return upstream_request_->start();
 }
 

@@ -7,6 +7,7 @@ import "envoy/config/core/v3/config_source.proto";
 import "envoy/extensions/filters/network/thrift_proxy/v3/route.proto";
 
 import "google/protobuf/any.proto";
+import "google/protobuf/duration.proto";
 import "google/protobuf/wrappers.proto";
 
 import "envoy/annotations/deprecation.proto";
@@ -169,4 +170,13 @@ message ThriftProtocolOptions {
   // :ref:`AUTO_PROTOCOL<envoy_v3_api_enum_value_extensions.filters.network.thrift_proxy.v3.ProtocolType.AUTO_PROTOCOL>`,
   // which is the default, causes the proxy to use the same protocol as the downstream connection.
   ProtocolType protocol = 2 [(validate.rules).enum = {defined_only: true}];
+
+  // The idle timeout for connections. The idle timeout is defined as the
+  // period in which there are no active requests. When the
+  // idle timeout is reached the connection will be closed.
+  //
+  // .. warning::
+  //   Disabling this timeout has a highly likelihood of yielding connection leaks due to lost TCP
+  //   FIN packets, etc.
+  google.protobuf.Duration idle_timeout = 3;
 }

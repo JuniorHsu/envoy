@@ -452,11 +452,13 @@ public:
   virtual void onReset() {}
 
 protected:
+  // TODO(kuochunghsu): clang format member name should end with _
   struct UpstreamRequestInfo {
     bool passthrough_supported;
     TransportType transport;
     ProtocolType protocol;
     absl::optional<Upstream::TcpPoolData> conn_pool_data;
+    absl::optional<std::chrono::milliseconds> idle_timeout;
   };
 
   struct PrepareUpstreamRequestResult {
@@ -526,12 +528,17 @@ protected:
               absl::nullopt};
     }
 
+    absl::optional<std::chrono::milliseconds> idle_timeout;
+    if (options) {
+      idle_timeout = options->idleTimeout();
+    }
+
     const auto passthrough_supported =
         (transport == TransportType::Framed || transport == TransportType::Header) &&
         (final_transport == TransportType::Framed || final_transport == TransportType::Header) &&
         protocol == final_protocol && final_protocol != ProtocolType::Twitter;
     UpstreamRequestInfo result = {passthrough_supported, final_transport, final_protocol,
-                                  conn_pool_data};
+                                  conn_pool_data, idle_timeout};
     return {absl::nullopt, result};
   }
 

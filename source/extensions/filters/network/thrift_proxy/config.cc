@@ -31,7 +31,17 @@ namespace ThriftProxy {
 ProtocolOptionsConfigImpl::ProtocolOptionsConfigImpl(
     const envoy::extensions::filters::network::thrift_proxy::v3::ThriftProtocolOptions& config)
     : transport_(ProtoUtils::getTransportType(config.transport())),
-      protocol_(ProtoUtils::getProtocolType(config.protocol())) {}
+      protocol_(ProtoUtils::getProtocolType(config.protocol())) {
+  if (config.has_idle_timeout()) {
+    idle_timeout_ =
+        std::chrono::milliseconds(DurationUtil::durationToMilliseconds(config.idle_timeout()));
+    if (idle_timeout_.value().count() == 0) {
+      idle_timeout_ = absl::nullopt;
+    }
+  } else {
+    idle_timeout_ = std::chrono::hours(1);
+  }
+}
 
 TransportType ProtocolOptionsConfigImpl::transport(TransportType downstream_transport) const {
   return (transport_ == TransportType::Auto) ? downstream_transport : transport_;
@@ -39,6 +49,10 @@ TransportType ProtocolOptionsConfigImpl::transport(TransportType downstream_tran
 
 ProtocolType ProtocolOptionsConfigImpl::protocol(ProtocolType downstream_protocol) const {
   return (protocol_ == ProtocolType::Auto) ? downstream_protocol : protocol_;
+}
+
+absl::optional<std::chrono::milliseconds> ProtocolOptionsConfigImpl::idleTimeout() const {
+  return idle_timeout_;
 }
 
 SINGLETON_MANAGER_REGISTRATION(thrift_route_config_provider_manager);

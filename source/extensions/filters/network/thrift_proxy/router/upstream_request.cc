@@ -10,12 +10,13 @@ namespace Router {
 
 UpstreamRequest::UpstreamRequest(RequestOwner& parent, Upstream::TcpPoolData& pool_data,
                                  MessageMetadataSharedPtr& metadata, TransportType transport_type,
-                                 ProtocolType protocol_type, bool close_downstream_on_error)
+                                 ProtocolType protocol_type, bool close_downstream_on_error,
+                                 absl::optional<std::chrono::milliseconds> idle_timeout)
     : parent_(parent), stats_(parent.stats()), conn_pool_data_(pool_data), metadata_(metadata),
       transport_(NamedTransportConfigFactory::getFactory(transport_type).createTransport()),
       protocol_(NamedProtocolConfigFactory::getFactory(protocol_type).createProtocol()),
       request_complete_(false), response_underflow_(false), charged_response_timing_(false),
-      close_downstream_on_error_(close_downstream_on_error) {}
+      close_downstream_on_error_(close_downstream_on_error), idle_timeout_(idle_timeout) {}
 
 UpstreamRequest::~UpstreamRequest() {
   if (conn_pool_handle_) {
@@ -43,12 +44,38 @@ FilterStatus UpstreamRequest::start() {
   return FilterStatus::Continue;
 }
 
+void UpstreamRequest::onIdleTimeout() {
+  ENVOY_LOG(info, "on idle timeout");
+  if (upstream_host_) {
+    // TODO in next: use thrift stats
+    upstream_host_->cluster().stats().upstream_cx_idle_timeout_.inc();
+  }
+
+  resetStream();
+}
+
+void UpstreamRequest::disableIdleTimer() {
+  if (idle_timer_ != nullptr) {
+    idle_timer_->disableTimer();
+    idle_timer_.reset();
+  }
+}
+
+void UpstreamRequest::resetIdleTimer() {
+  if (idle_timer_ != nullptr) {
+    ASSERT(idle_timeout_.has_value());
+    idle_timer_->enableTimer(idle_timeout_.value());
+  }
+}
+
 void UpstreamRequest::releaseConnection(const bool close) {
   ENVOY_LOG(debug, "releasing connection, close: {}", close);
   if (conn_pool_handle_) {
     conn_pool_handle_->cancel(Tcp::ConnectionPool::CancelPolicy::Default);
     conn_pool_handle_ = nullptr;
   }
+
+  disableIdleTimer();
 
   conn_state_ = nullptr;
 
@@ -181,6 +208,9 @@ UpstreamRequest::handleRegularResponse(Buffer::Instance& data,
     upstream_host_->outlierDetector().putResult(Upstream::Outlier::Result::ExtOriginRequestFailed);
     stats_.incResponseDecodingError(cluster, upstream_host_);
     resetStream();
+  } else {
+    ASSERT(status == ThriftFilters::ResponseStatus::MoreData);
+    resetIdleTimer();
   }
 
   return status;
@@ -240,6 +270,7 @@ void UpstreamRequest::onEvent(Network::ConnectionEvent event) {
 }
 
 uint64_t UpstreamRequest::encodeAndWrite(Buffer::OwnedImpl& request_buffer) {
+  ENVOY_LOG(info, "encode and write");
   Buffer::OwnedImpl transport_buffer;
 
   metadata_->setProtocol(protocol_->type());
@@ -249,15 +280,23 @@ uint64_t UpstreamRequest::encodeAndWrite(Buffer::OwnedImpl& request_buffer) {
 
   conn_data_->connection().write(transport_buffer, false);
 
+  resetIdleTimer();
+
   return size;
 }
 
 void UpstreamRequest::onRequestStart(bool continue_decoding) {
+  ENVOY_LOG(info, "on request start");
   auto& buffer = parent_.buffer();
   parent_.initProtocolConverter(*protocol_, buffer);
 
   metadata_->setSequenceId(conn_state_->nextSequenceId());
   parent_.convertMessageBegin(metadata_);
+
+  if (idle_timeout_.has_value()) {
+    idle_timer_ = parent_.dispatcher().createTimer([this]() -> void { onIdleTimeout(); });
+    resetIdleTimer();
+  }
 
   if (continue_decoding) {
     parent_.continueDecoding();

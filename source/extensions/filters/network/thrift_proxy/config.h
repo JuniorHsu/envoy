@@ -32,10 +32,12 @@ public:
   // ProtocolOptionsConfig
   TransportType transport(TransportType downstream_transport) const override;
   ProtocolType protocol(ProtocolType downstream_protocol) const override;
+  absl::optional<std::chrono::milliseconds> idleTimeout() const override;
 
 private:
   const TransportType transport_;
   const ProtocolType protocol_;
+  absl::optional<std::chrono::milliseconds> idle_timeout_;
 };
 
 /**

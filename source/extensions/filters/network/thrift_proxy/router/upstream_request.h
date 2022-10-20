@@ -1,6 +1,7 @@
 #pragma once
 
 #include "envoy/common/time.h"
+#include "envoy/event/timer.h"
 #include "envoy/tcp/conn_pool.h"
 
 #include "source/common/common/logger.h"
@@ -30,7 +31,8 @@ struct UpstreamRequest : public Tcp::ConnectionPool::Callbacks,
                          Logger::Loggable<Logger::Id::thrift> {
   UpstreamRequest(RequestOwner& parent, Upstream::TcpPoolData& pool_data,
                   MessageMetadataSharedPtr& metadata, TransportType transport_type,
-                  ProtocolType protocol_type, bool close_downstream_on_error);
+                  ProtocolType protocol_type, bool close_downstream_on_error,
+                  absl::optional<std::chrono::milliseconds> idle_timeout);
   ~UpstreamRequest() override;
 
   FilterStatus start();
@@ -58,6 +60,10 @@ struct UpstreamRequest : public Tcp::ConnectionPool::Callbacks,
   bool onResetStream(ConnectionPool::PoolFailureReason reason);
   void chargeResponseTiming();
 
+  void onIdleTimeout();
+  void disableIdleTimer();
+  void resetIdleTimer();
+
   RequestOwner& parent_;
   const RouterStats& stats_;
   Upstream::TcpPoolData& conn_pool_data_;
@@ -83,6 +89,8 @@ struct UpstreamRequest : public Tcp::ConnectionPool::Callbacks,
   bool response_underflow_ : 1;
   bool charged_response_timing_ : 1;
   bool close_downstream_on_error_ : 1;
+  absl::optional<std::chrono::milliseconds> idle_timeout_;
+  Event::TimerPtr idle_timer_;
 
   absl::optional<MonotonicTime> downstream_request_complete_time_;
   uint64_t response_size_{};

@@ -1,8 +1,12 @@
 #pragma once
 
+#include <chrono>
+
 #include "envoy/upstream/upstream.h"
 
 #include "source/extensions/filters/network/thrift_proxy/thrift.h"
+
+#include "absl/types/optional.h"
 
 namespace Envoy {
 namespace Extensions {
@@ -18,6 +22,7 @@ public:
 
   virtual TransportType transport(TransportType downstream_transport) const PURE;
   virtual ProtocolType protocol(ProtocolType downstream_protocol) const PURE;
+  virtual absl::optional<std::chrono::milliseconds> idleTimeout() const PURE;
 };
 
 } // namespace ThriftProxy
