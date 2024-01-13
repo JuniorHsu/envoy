@@ -126,6 +126,29 @@ ConnectionManager::sendLocalReply(MessageMetadata& metadata, const DirectRespons
     metadata.setProtocol(protocol_->type());
     transport_->encodeFrame(response_buffer, metadata, buffer);
 
+    void* buf = response_buffer.linearize(static_cast<uint32_t>(response_buffer.length()));
+    const unsigned char* linearized_data = static_cast<const unsigned char*>(buf);
+
+    std::stringstream hexStream;
+    std::string asciiRepresentation;
+
+    for (uint32_t i = 0; i < response_buffer.length(); ++i) {
+        // Convert each byte to a two-digit hexadecimal representation
+        hexStream << std::setfill('0') << std::setw(2) << std::hex << static_cast<int>(linearized_data[i]);
+
+        if (i != response_buffer.length() - 1) {
+            // Append a space after each character except the last one
+            hexStream << ' ';
+        }
+
+        // Append the byte to the ASCII representation
+        asciiRepresentation += static_cast<char>(linearized_data[i]);
+    }
+
+    std::string hexRepresentation = hexStream.str();
+    std::transform(hexRepresentation.begin(), hexRepresentation.end(), hexRepresentation.begin(), ::toupper);
+
+    ENVOY_LOG(debug, "XXX thrift local reply (hex): {} \n (ascii): {}", hexRepresentation, asciiRepresentation);
     read_callbacks_->connection().write(response_buffer, end_stream);
   }
 
