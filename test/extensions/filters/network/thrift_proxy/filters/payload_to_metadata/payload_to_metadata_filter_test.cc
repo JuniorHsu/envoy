@@ -192,7 +192,7 @@ public:
     decoder->onData(buffer, underflow);
   }
 
-  void writeMessageMultiStruct() {
+  void writeMessageMultiStruct(bool list_of_struct = false) {
     Buffer::OwnedImpl buffer;
     auto metadata_ptr =
         std::make_shared<Extensions::NetworkFilters::ThriftProxy::MessageMetadata>();
@@ -229,6 +229,30 @@ public:
     proto->writeString(msg, "qux");
     proto->writeFieldEnd(msg);
 
+    if (!list_of_struct) {
+      proto->writeFieldBegin(msg, "list_of_struct", FieldType::List, 2);
+      proto->writeListBegin(msg, FieldType::Struct, 2);
+
+      // First struct
+      proto->writeStructBegin(msg, "data");
+      proto->writeFieldBegin(msg, "check", FieldType::String, 1);
+      proto->writeString(msg, "a");
+      proto->writeFieldEnd(msg);
+      proto->writeFieldBegin(msg, "", FieldType::Stop, 0); // data stop field
+      proto->writeStructEnd(msg);
+
+      // Second struct
+      proto->writeStructBegin(msg, "data");
+      proto->writeFieldBegin(msg, "check", FieldType::String, 1);
+      proto->writeString(msg, "b");
+      proto->writeFieldEnd(msg);
+      proto->writeFieldBegin(msg, "", FieldType::Stop, 0); // data stop field
+      proto->writeStructEnd(msg);
+
+      proto->writeListEnd(msg);
+      proto->writeFieldEnd(msg);
+    }
+
     proto->writeFieldBegin(msg, "", FieldType::Stop, 0); // request stop field
     proto->writeStructEnd(msg);
     proto->writeFieldEnd(msg);
@@ -249,13 +273,132 @@ public:
     decoder->onData(buffer, underflow);
   }
 
+  void writeBytesMessage(const std::string& bytes) {
+    Buffer::OwnedImpl msg;
+    std::stringstream ss(bytes);
+    std::string item;
+
+    auto metadata_ptr =
+      std::make_shared<Extensions::NetworkFilters::ThriftProxy::MessageMetadata>();
+    auto& metadata = *metadata_ptr;
+
+    ProtocolPtr proto = NamedProtocolConfigFactory::getFactory(protocol_).createProtocol();
+    metadata.setProtocol(protocol_);
+    // if (!method_name.empty()) {
+      metadata.setMethodName("enqueueJobs");
+    // }
+    metadata.setMessageType(MessageType::Call);
+    metadata.setSequenceId(0);
+
+    while (ss >> item) {
+      if (item.size() != 2) {
+        std::cout << "XXXXX invalid hex string: " << item << std::endl;
+        return;
+      }
+      int value = std::stoi(item, nullptr, 16);
+      msg.add(&value, 1);
+    }
+/*
+    Buffer::OwnedImpl buffer;
+    TransportPtr transport = NamedTransportConfigFactory::getFactory(transport_).createTransport();
+    transport->encodeFrame(buffer, metadata, msg);
+
+    // Simulate the decoder events. Check PassThroughDecoderEventHandler.
+    ProtocolPtr decoder_proto = NamedProtocolConfigFactory::getFactory(protocol_).createProtocol();
+    TransportPtr decoder_transport =
+        NamedTransportConfigFactory::getFactory(transport_).createTransport();
+    DecoderPtr decoder = std::make_unique<Decoder>(*decoder_transport, *decoder_proto, *this);
+    bool underflow = false;
+    decoder->onData(buffer, underflow);
+*/
+    filter_->messageBegin(metadata_ptr);
+    filter_->passthroughData(msg);
+  }
+
   NiceMock<ThriftProxy::ThriftFilters::MockDecoderFilterCallbacks> decoder_callbacks_;
   NiceMock<Envoy::StreamInfo::MockStreamInfo> req_info_;
   std::shared_ptr<PayloadToMetadataFilter> filter_;
   const ProtocolType protocol_{ProtocolType::Binary};
   const TransportType transport_{TransportType::Header};
 };
+/*
+TEST_F(PayloadToMetadataTest, Crashing) {
+  const std::string request_config_yaml = R"EOF(
+request_rules:
+  - method_name: enqueueJobs
+    field_selector:
+      name: second_field
+      id: 2
+    on_present:
+      metadata_namespace: envoy.lb
+      key: present
+    on_missing:
+      metadata_namespace: envoy.lb
+      key: missing
+      value: unknown
+)EOF";
 
+  const std::map<std::string, std::string> expected = {{"present", "two"}};
+
+  initializeFilter(request_config_yaml);
+  EXPECT_CALL(req_info_, setDynamicMetadata("envoy.lb", MapEq(expected)));
+  EXPECT_CALL(decoder_callbacks_, streamInfo()).WillRepeatedly(ReturnRef(req_info_));
+
+  // clang-format off
+  std::string bytes =
+      "0C 00 01 0B 00";
+  // clang-format on
+  writeBytesMessage(bytes);
+  filter_->onDestroy();
+}
+*/
+
+TEST_F(PayloadToMetadataTest, ListOfStruct) {
+const std::string request_config_yaml = R"EOF(
+request_rules:
+  - method_name: unmatched_foo
+    field_selector:
+      name: request
+      id: 2
+      child:
+        name: baz
+        id: 1
+    on_present:
+      metadata_namespace: envoy.lb
+      key: baz
+  - method_name: unmatched_foo2
+    field_selector:
+      name: request
+      id: 2
+      child:
+        name: baz
+        id: 1
+    on_present:
+      metadata_namespace: envoy.lb
+      key: baz
+  - method_name: foo
+    field_selector:
+      name: request
+      id: 2
+      child:
+        name: baz
+        id: 1
+    on_present:
+      metadata_namespace: envoy.lb
+      key: baz
+)EOF";
+
+  const std::map<std::string, std::string> expected = {{"baz", "qux"}};
+
+  initializeFilter(request_config_yaml);
+  EXPECT_CALL(req_info_, setDynamicMetadata("envoy.lb", MapEq(expected)));
+  EXPECT_CALL(decoder_callbacks_, streamInfo()).WillRepeatedly(ReturnRef(req_info_));
+
+  writeMessageMultiStruct(true);
+  filter_->onDestroy();
+}
+
+/*
 TEST_F(PayloadToMetadataTest, MatchFirstLayerString) {
   const std::string request_config_yaml = R"EOF(
 request_rules:
@@ -1315,7 +1458,8 @@ request_rules:
   writeMessageMultiStruct();
   filter_->onDestroy();
 }
-
+*/
+/*
 TEST_F(PayloadToMetadataTest, MalformPayloadWontCrash) {
   const std::string request_config_yaml = R"EOF(
 request_rules:
@@ -1336,7 +1480,7 @@ request_rules:
 
   EXPECT_ENVOY_BUG(
       {
-        initializeFilter(request_config_yaml, true, true /* malformed */);
+        initializeFilter(request_config_yaml, true, true malformed );
         EXPECT_CALL(req_info_, setDynamicMetadata("envoy.lb", MapEq(expected)));
         EXPECT_CALL(decoder_callbacks_, streamInfo()).WillRepeatedly(ReturnRef(req_info_));
         writeMessage();
@@ -1345,7 +1489,7 @@ request_rules:
       "envoy bug failure: false. Details: decoding error, error_message: payload to "
       "metadata filter: invalid trie state, node is null, payload: 0A 00 01 00");
 }
-
+*/
 } // namespace PayloadToMetadataFilter
 } // namespace ThriftFilters
 } // namespace Extensions

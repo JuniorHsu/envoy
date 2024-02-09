@@ -9,6 +9,7 @@
 #include "source/extensions/filters/network/thrift_proxy/framed_transport_impl.h"
 #include "source/extensions/filters/network/thrift_proxy/header_transport_impl.h"
 #include "source/extensions/filters/network/thrift_proxy/unframed_transport_impl.h"
+#include <string>
 
 namespace Envoy {
 namespace Extensions {
@@ -109,42 +110,49 @@ FilterStatus TrieMatchHandler::messageEnd() {
 }
 
 FilterStatus TrieMatchHandler::structBegin(absl::string_view) {
-  ENVOY_LOG(trace, "TrieMatchHandler structBegin id: {}, steps: {}",
+  ENVOY_LOG(trace, "TrieMatchHandler structBegin from id: {}, steps: {}",
             last_field_id_.has_value() ? std::to_string(last_field_id_.value())
                                        : "top_level_struct",
             steps_);
-  assertNode();
-  if (last_field_id_.has_value()) {
-    if (steps_ == 0 && node_->children_.find(last_field_id_.value()) != node_->children_.end()) {
-      node_ = node_->children_[last_field_id_.value()];
-      ENVOY_LOG(trace, "name: {}", node_->name_);
-    } else {
-      steps_++;
-    }
-  }
+  // assertNode();
+  // if (last_field_id_.has_value()) {
+  //   if (steps_ == 0 && node_->children_.find(last_field_id_.value()) != node_->children_.end()) {
+  //     node_ = node_->children_[last_field_id_.value()];
+  //     ENVOY_LOG(trace, "name: {}", node_->name_);
+  //   } else {
+  //     steps_++;
+  //   }
+  // }
+  ENVOY_LOG(trace, "TrieMatchHandler structBegin  to id: {}, steps: {}",
+            last_field_id_.has_value() ? std::to_string(last_field_id_.value())
+                                       : "top_level_struct",
+            steps_);
   return FilterStatus::Continue;
 }
 
 FilterStatus TrieMatchHandler::structEnd() {
-  ENVOY_LOG(trace, "TrieMatchHandler structEnd, steps: {}", steps_);
-  assertNode();
-  if (steps_ > 0) {
-    steps_--;
-  } else if (node_->parent_.lock()) {
-    node_ = node_->parent_.lock();
-  } else {
-    // last decoder event
-    node_ = nullptr;
-  }
+  ENVOY_LOG(trace, "TrieMatchHandler structEnd, from steps: {}", steps_);
+  // assertNode();
+  // if (steps_ > 0) {
+  //   steps_--;
+  // } else if (node_->parent_.lock()) {
+  //   node_ = node_->parent_.lock();
+  // } else {
+  //   // last decoder event
+  //   node_ = nullptr;
+  // }
+  ENVOY_LOG(trace, "TrieMatchHandler structEnd,  to  steps: {}", steps_);
   return FilterStatus::Continue;
 }
 
 FilterStatus TrieMatchHandler::fieldBegin(absl::string_view, FieldType&, int16_t& field_id) {
+  ENVOY_LOG(trace, "TrieMatchHandler fieldBegin id:{}", field_id);
   last_field_id_ = field_id;
   return FilterStatus::Continue;
 }
 
 FilterStatus TrieMatchHandler::fieldEnd() {
+  ENVOY_LOG(trace, "TrieMatchHandler fieldEnd");
   last_field_id_.reset();
   return FilterStatus::Continue;
 }
@@ -157,19 +165,19 @@ FilterStatus TrieMatchHandler::stringValue(absl::string_view value) {
 
 template <typename NumberType> FilterStatus TrieMatchHandler::numberValue(NumberType value) {
   assertLastFieldId();
-  ENVOY_LOG(trace, "TrieMatchHandler numberValue id:{} value:{}", last_field_id_.value(), value);
+  ENVOY_LOG(trace, "XX TrieMatchHandler numberValue id:{} value:{}", last_field_id_.value(), value);
   return handleString(std::to_string(value));
 }
 
-FilterStatus TrieMatchHandler::handleString(std::string value) {
-  assertNode();
-  assertLastFieldId();
-  if (steps_ == 0 && node_->children_.find(last_field_id_.value()) != node_->children_.end() &&
-      !node_->children_[last_field_id_.value()]->rule_ids_.empty()) {
-    auto on_present_node = node_->children_[last_field_id_.value()];
-    ENVOY_LOG(trace, "name: {}", on_present_node->name_);
-    parent_.handleOnPresent(std::move(value), on_present_node->rule_ids_);
-  }
+FilterStatus TrieMatchHandler::handleString(std::string) {
+  // assertNode();
+  // assertLastFieldId();
+  // if (steps_ == 0 && node_->children_.find(last_field_id_.value()) != node_->children_.end() &&
+  //     !node_->children_[last_field_id_.value()]->rule_ids_.empty()) {
+  //   auto on_present_node = node_->children_[last_field_id_.value()];
+  //   ENVOY_LOG(trace, "name: {}", on_present_node->name_);
+  //   parent_.handleOnPresent(std::move(value), on_present_node->rule_ids_);
+  // }
   return FilterStatus::Continue;
 }
 

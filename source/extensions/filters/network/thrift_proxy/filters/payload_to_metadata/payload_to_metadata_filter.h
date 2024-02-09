@@ -99,21 +99,55 @@ public:
   FilterStatus fieldBegin(absl::string_view name, FieldType& field_type,
                           int16_t& field_id) override;
   FilterStatus fieldEnd() override;
-  FilterStatus boolValue(bool& value) override { return numberValue(value); }
-  FilterStatus byteValue(uint8_t& value) override { return numberValue(value); }
-  FilterStatus int16Value(int16_t& value) override { return numberValue(value); }
-  FilterStatus int32Value(int32_t& value) override { return numberValue(value); }
-  FilterStatus int64Value(int64_t& value) override { return numberValue(value); }
-  FilterStatus doubleValue(double& value) override { return numberValue(value); }
+  FilterStatus boolValue(bool& value) override {
+    ENVOY_LOG(trace, "TrieMatchHandler boolValue");
+    return numberValue(value);
+  }
+  FilterStatus byteValue(uint8_t& value) override {
+    ENVOY_LOG(trace, "TrieMatchHandler byteValue");
+    return numberValue(value);
+  }
+  FilterStatus int16Value(int16_t& value) override {
+    ENVOY_LOG(trace, "TrieMatchHandler int16Value");
+    return numberValue(value);
+  }
+  FilterStatus int32Value(int32_t& value) override {
+    ENVOY_LOG(trace, "TrieMatchHandler int32Value");
+    return numberValue(value);
+  }
+  FilterStatus int64Value(int64_t& value) override {
+    ENVOY_LOG(trace, "TrieMatchHandler int64Value");
+    return numberValue(value);
+  }
+  FilterStatus doubleValue(double& value) override {
+    ENVOY_LOG(trace, "TrieMatchHandler doubleValue");
+    return numberValue(value);
+  }
   FilterStatus stringValue(absl::string_view value) override;
   FilterStatus mapBegin(FieldType&, FieldType&, uint32_t&) override {
+    ENVOY_LOG(trace, "TrieMatchHandler mapBegin");
     return handleContainerBegin();
   }
-  FilterStatus mapEnd() override { return handleContainerEnd(); }
-  FilterStatus listBegin(FieldType&, uint32_t&) override { return handleContainerBegin(); }
-  FilterStatus listEnd() override { return handleContainerEnd(); }
-  FilterStatus setBegin(FieldType&, uint32_t&) override { return handleContainerBegin(); }
-  FilterStatus setEnd() override { return handleContainerEnd(); }
+  FilterStatus mapEnd() override {
+    ENVOY_LOG(trace, "TrieMatchHandler mapEnd");
+    return handleContainerEnd();
+  }
+  FilterStatus listBegin(FieldType&, uint32_t& size) override {
+    ENVOY_LOG(trace, "TrieMatchHandler listBegin size={}", size);
+    return handleContainerBegin();
+  }
+  FilterStatus listEnd() override {
+    ENVOY_LOG(trace, "TrieMatchHandler listEnd");
+    return handleContainerEnd();
+  }
+  FilterStatus setBegin(FieldType&, uint32_t&) override {
+    ENVOY_LOG(trace, "TrieMatchHandler setBegin");
+    return handleContainerBegin();
+  }
+  FilterStatus setEnd() override {
+    ENVOY_LOG(trace, "TrieMatchHandler setEnd");
+    return handleContainerEnd();
+  }
 
   // DecoderCallbacks
   DecoderEventHandler& newDecoderEventHandler() override { return *this; }
@@ -130,11 +164,13 @@ private:
   void assertLastFieldId();
 
   FilterStatus handleContainerBegin() {
+    ENVOY_LOG(trace, "TrieMatchHandler handleContainerBegin steps={}", steps_);
     steps_++;
     return FilterStatus::Continue;
   }
 
   FilterStatus handleContainerEnd() {
+    ENVOY_LOG(trace, "TrieMatchHandler handleContainerEnd steps={}", steps_);
     steps_--;
     return FilterStatus::Continue;
   }
