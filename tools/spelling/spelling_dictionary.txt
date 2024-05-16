@@ -156,6 +156,7 @@ ETB
 ETX
 FS
 FIXME
+funcname
 gperf
 HEXDIG
 HEXDIGIT
@@ -1152,6 +1153,8 @@ pchar
 pclose
 performant
 pfctl
+pina
+pinc
 pipelined
 pipelining
 pkey
