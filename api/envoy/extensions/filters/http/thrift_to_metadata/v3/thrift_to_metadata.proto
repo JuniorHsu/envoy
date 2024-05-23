@@ -16,7 +16,6 @@ option java_outer_classname = "ThriftToMetadataProto";
 option java_multiple_files = true;
 option go_package = "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/thrift_to_metadata/v3;thrift_to_metadatav3";
 option (udpa.annotations.file_status).package_version_status = ACTIVE;
-option (xds.annotations.v3.file_status).work_in_progress = true;
 
 // [#protodoc-title: Thrift-To-Metadata Filter]
 //
@@ -32,10 +31,14 @@ enum Field {
   // The Thrift method name, string value.
   METHOD_NAME = 0;
 
-  // The Thrift protocol name, string value. Values are "binary", "binary/non-strict", and "compact".
+  // The Thrift protocol name, string value. Values are "binary", "binary/non-strict", and "compact", with "(auto)" suffix if
+  // :ref:`protocol <envoy_v3_api_field_extensions.filters.http.thrift_to_metadata.v3.ThriftToMetadata.protocol>`
+  // is set to :ref:`AUTO_PROTOCOL<envoy_v3_api_enum_value_extensions.filters.network.thrift_proxy.v3.ProtocolType.AUTO_PROTOCOL>`
   PROTOCOL = 1;
 
-  // The Thrift transport name, string value. Values are "framed", "header", and "unframed".
+  // The Thrift transport name, string value. Values are "framed", "header", and "unframed", with "(auto)" suffix if
+  // :ref:`transport <envoy_v3_api_field_extensions.filters.http.thrift_to_metadata.v3.ThriftToMetadata.transport>`
+  // is set to :ref:`AUTO_TRANSPORT<envoy_v3_api_enum_value_extensions.filters.network.thrift_proxy.v3.TransportType.AUTO_TRANSPORT>`
   TRANSPORT = 2;
 
   // The Thrift message type, singed 16-bit integer value.
@@ -111,6 +114,8 @@ message ThriftToMetadata {
 
   // Supplies the type of protocol that the Thrift proxy should use. Defaults to
   // :ref:`AUTO_PROTOCOL<envoy_v3_api_enum_value_extensions.filters.network.thrift_proxy.v3.ProtocolType.AUTO_PROTOCOL>`.
+  // Note that :ref:`TWITTER<envoy_v3_api_enum_value_extensions.filters.network.thrift_proxy.v3.ProtocolType.TWITTER>` is
+  // not supported due to deprecation in envoy.
   network.thrift_proxy.v3.ProtocolType protocol = 4 [(validate.rules).enum = {defined_only: true}];
 
   // Allowed content-type for thrift to metadata transformation.
@@ -129,6 +134,7 @@ message ThriftToMetadata {
 // Thrift to metadata configuration on a per-route basis, which overrides the global configuration for
 // request rules and responses rules.
 message ThriftToMetadataPerRoute {
+  option (xds.annotations.v3.message_status).work_in_progress = true;
   // The list of rules to apply to http request body to extract thrift metadata.
   repeated Rule request_rules = 1;
 
