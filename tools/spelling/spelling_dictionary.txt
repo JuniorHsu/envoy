@@ -1373,6 +1373,7 @@ sim
 sinked
 sint
 sizeof
+sk
 smatch
 snapshotted
 sockaddr
@@ -1498,6 +1499,7 @@ trds
 tri
 triaged
 trie
+ttwitter
 tuple
 tuples
 typedef
