@@ -47,6 +47,18 @@ public:
    * watermarks have gone below.
    */
   virtual void onSidestreamBelowLowWatermark() PURE;
+
+  /**
+    Sidestream subscribes to downstream watermark events on the downstream stream and downstream
+    connection.
+  */
+  virtual void addDownstreamWatermarkCallbacks(Http::DownstreamWatermarkCallbacks& callbacks) PURE;
+  /**
+    Sidestream stop subscribing to watermark events on the downstream stream and downstream
+    connection.
+   */
+  virtual void
+  removeDownstreamWatermarkCallbacks(Http::DownstreamWatermarkCallbacks& callbacks) PURE;
 };
 
 /**
@@ -234,6 +246,7 @@ public:
      * @returns the stream info object associated with the stream.
      */
     virtual const StreamInfo::StreamInfo& streamInfo() const PURE;
+    virtual StreamInfo::StreamInfo& streamInfo() PURE;
   };
 
   /***
@@ -367,6 +380,11 @@ public:
       return *this;
     }
 
+    StreamOptions& setSidestreamWatermarkCallbacks(SidestreamWatermarkCallbacks* callbacks) {
+      sidestream_watermark_callbacks = callbacks;
+      return *this;
+    }
+
     // For gmock test
     bool operator==(const StreamOptions& src) const {
       return timeout == src.timeout && buffer_body_for_retry == src.buffer_body_for_retry &&
@@ -424,6 +442,8 @@ public:
     std::string child_span_name_{""};
     // Sampling decision for the tracing span. The span is sampled by default.
     absl::optional<bool> sampled_{true};
+    // The pointer to sidestream watermark callbacks. Optional, nullptr by default.
+    Http::SidestreamWatermarkCallbacks* sidestream_watermark_callbacks = nullptr;
   };
 
   /**

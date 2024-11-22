@@ -199,9 +199,9 @@ private:
           (remote_end_stream_received_ && !remote_end_stream_forwarded_ && !response_trailers_));
     }
 
-    void sendDataToBridge(Buffer::Instance& data, bool end_stream);
-    void sendTrailersToBridge(const ResponseTrailerMap& trailers);
-    void sendErrorToBridge();
+    void sendData(Buffer::Instance& data, bool end_stream);
+    void sendTrailers(const ResponseTrailerMap& trailers);
+    void sendError();
     envoy_stream_intel streamIntel();
     envoy_final_stream_intel& finalStreamIntel();
 
@@ -331,6 +331,7 @@ private:
     // Set true in explicit flow control mode if the library has sent body data and may want to
     // send more when buffer is available.
     bool wants_write_notification_{};
+    Event::SchedulableCallbackPtr scheduled_callback_;
     // True if the bridge should operate in explicit flow control mode.
     //
     // In this mode only one callback can be sent to the bridge until more is
@@ -383,7 +384,6 @@ private:
 
   ApiListenerPtr api_listener_;
   Event::ProvisionalDispatcher& dispatcher_;
-  Event::SchedulableCallbackPtr scheduled_callback_;
   HttpClientStats stats_;
   // The set of open streams, which can safely have request data sent on them
   // or response data received.

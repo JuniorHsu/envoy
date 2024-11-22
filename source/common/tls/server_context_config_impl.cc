@@ -61,9 +61,9 @@ Secret::TlsSessionTicketKeysConfigProviderSharedPtr getTlsSessionTicketKeysConfi
       SessionTicketKeysTypeCase::SESSION_TICKET_KEYS_TYPE_NOT_SET:
     return nullptr;
   default:
-    creation_status =
-        absl::InvalidArgumentError(fmt::format("Unexpected case for oneof session_ticket_keys: {}",
-                                               config.session_ticket_keys_type_case()));
+    creation_status = absl::InvalidArgumentError(
+        fmt::format("Unexpected case for oneof session_ticket_keys: {}",
+                    static_cast<int>(config.session_ticket_keys_type_case())));
     return nullptr;
   }
 }
@@ -115,8 +115,9 @@ ServerContextConfigImpl::ServerContextConfigImpl(
     const envoy::extensions::transport_sockets::tls::v3::DownstreamTlsContext& config,
     Server::Configuration::TransportSocketFactoryContext& factory_context,
     absl::Status& creation_status, bool for_quic)
-    : ContextConfigImpl(config.common_tls_context(), DEFAULT_MIN_VERSION, DEFAULT_MAX_VERSION,
-                        DEFAULT_CIPHER_SUITES, DEFAULT_CURVES, factory_context, creation_status),
+    : ContextConfigImpl(config.common_tls_context(), false /* auto_sni_san_match */,
+                        DEFAULT_MIN_VERSION, DEFAULT_MAX_VERSION, DEFAULT_CIPHER_SUITES,
+                        DEFAULT_CURVES, factory_context, creation_status),
       require_client_certificate_(
           PROTOBUF_GET_WRAPPED_OR_DEFAULT(config, require_client_certificate, false)),
       ocsp_staple_policy_(ocspStaplePolicyFromProto(config.ocsp_staple_policy())),

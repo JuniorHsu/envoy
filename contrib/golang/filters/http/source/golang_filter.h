@@ -223,6 +223,7 @@ public:
   }
 
   // Http::StreamFilterBase
+  void onStreamComplete() override;
   void onDestroy() ABSL_LOCKS_EXCLUDED(mutex_) override;
   Http::LocalErrorStatus onLocalReply(const LocalReplyData&) override;
 
@@ -255,9 +256,8 @@ public:
   void log(const Formatter::HttpFormatterContext& log_context,
            const StreamInfo::StreamInfo& info) override;
 
-  void onStreamComplete() override {}
-
-  CAPIStatus clearRouteCache();
+  CAPIStatus clearRouteCache(bool refresh);
+  void clearRouteCacheInternal(bool refresh);
   CAPIStatus continueStatus(ProcessorState& state, GolangStatus status);
 
   CAPIStatus sendLocalReply(ProcessorState& state, Http::Code response_code, std::string body_text,
@@ -265,6 +265,8 @@ public:
                             Grpc::Status::GrpcStatus grpc_status, std::string details);
 
   CAPIStatus sendPanicReply(ProcessorState& state, absl::string_view details);
+
+  CAPIStatus addData(ProcessorState& state, absl::string_view data, bool is_streaming);
 
   CAPIStatus getHeader(ProcessorState& state, absl::string_view key, uint64_t* value_data,
                        int* value_len);
@@ -293,8 +295,7 @@ public:
                                GoInt32* rc);
 
   bool isProcessingInGo() {
-    return is_golang_processing_log_ || decoding_state_.isProcessingInGo() ||
-           encoding_state_.isProcessingInGo();
+    return decoding_state_.isProcessingInGo() || encoding_state_.isProcessingInGo();
   }
   void deferredDeleteRequest(HttpRequestInternal* req);
 
@@ -346,7 +347,8 @@ private:
 
   // save temp values for fetching request attributes in the later phase,
   // like getting request size
-  Http::RequestOrResponseHeaderMap* request_headers_{nullptr};
+  Http::RequestHeaderMap* request_headers_{nullptr};
+  Http::RequestTrailerMap* request_trailers_{nullptr};
 
   HttpRequestInternal* req_{nullptr};
 
@@ -360,8 +362,6 @@ private:
   // back from go).
   Thread::MutexBasicLockable mutex_{};
   bool has_destroyed_ ABSL_GUARDED_BY(mutex_){false};
-
-  bool is_golang_processing_log_{false};
 };
 
 struct httpConfigInternal : httpConfig {

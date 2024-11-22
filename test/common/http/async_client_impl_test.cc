@@ -163,6 +163,31 @@ TEST_F(AsyncClientImplTest, BasicStream) {
   stream->sendHeaders(headers, false);
   stream->sendData(*body, true);
 
+  {
+    // Senseless but improves coverage.
+    Http::StreamDecoderFilterCallbacks* filter_callbacks =
+        dynamic_cast<Http::AsyncStreamImpl*>(stream);
+    filter_callbacks->continueDecoding(); // No-op.
+    Buffer::OwnedImpl buffer;
+    filter_callbacks->injectDecodedDataToFilterChain(buffer, true);   // No-op.
+    filter_callbacks->modifyDecodingBuffer([](Buffer::Instance&) {}); // No-op.
+    filter_callbacks->encodeMetadata(nullptr);                        // No-op.
+    EXPECT_EQ(false, filter_callbacks->recreateStream(nullptr));      // No-op.
+    filter_callbacks->getUpstreamSocketOptions();                     // No-op.
+    filter_callbacks->addUpstreamSocketOptions(nullptr);              // No-op.
+    filter_callbacks->mostSpecificPerFilterConfig();                  // No-op.
+    filter_callbacks->perFilterConfigs();                             // No-op.
+    filter_callbacks->http1StreamEncoderOptions();                    // No-op.
+    filter_callbacks->downstreamCallbacks();                          // No-op.
+    filter_callbacks->upstreamCallbacks();                            // No-op.
+    filter_callbacks->resetIdleTimer();                               // No-op.
+    filter_callbacks->setUpstreamOverrideHost({});                    // No-op.
+    filter_callbacks->filterConfigName();                             // No-op.
+    filter_callbacks->informationalHeaders();                         // No-op.
+    filter_callbacks->responseHeaders();                              // No-op.
+    filter_callbacks->responseTrailers();                             // No-op.
+  }
+
   response_decoder_->decode1xxHeaders(
       ResponseHeaderMapPtr(new TestResponseHeaderMapImpl{{":status", "100"}}));
   response_decoder_->decodeHeaders(
@@ -472,6 +497,8 @@ TEST_F(AsyncClientImplTest, OngoingRequestWithWatermarking) {
   EXPECT_NE(request, nullptr);
 
   StrictMock<MockSidestreamWatermarkCallbacks> watermark_callbacks;
+  EXPECT_CALL(watermark_callbacks, removeDownstreamWatermarkCallbacks(_));
+
   // Registering a new watermark callback should note that the high watermark has already been hit.
   EXPECT_CALL(watermark_callbacks, onSidestreamAboveHighWatermark());
   request->setWatermarkCallbacks(watermark_callbacks);
@@ -529,9 +556,9 @@ TEST_F(AsyncClientImplTest, OngoingRequestWithWatermarkingAndReset) {
       client_.startRequest(std::move(headers), callbacks_, AsyncClient::RequestOptions());
   EXPECT_NE(request, nullptr);
 
-  // StrictMock<MockStreamDecoderFilterCallbacks> watermark_callbacks;
   StrictMock<MockSidestreamWatermarkCallbacks> watermark_callbacks;
   request->setWatermarkCallbacks(watermark_callbacks);
+  EXPECT_CALL(watermark_callbacks, removeDownstreamWatermarkCallbacks(_));
 
   EXPECT_CALL(stream_encoder_, encodeData(BufferEqual(&data_copy), false));
   request->sendData(data, false);
@@ -1487,6 +1514,7 @@ TEST_F(AsyncClientImplTest, SendDataAfterRemoteClosure) {
 
   EXPECT_CALL(stream_encoder_, encodeData(_, _)).Times(0);
   stream->sendData(*body, true);
+  dispatcher_.clearDeferredDeleteList();
 }
 
 TEST_F(AsyncClientImplTest, SendTrailersRemoteClosure) {
@@ -1527,6 +1555,7 @@ TEST_F(AsyncClientImplTest, SendTrailersRemoteClosure) {
 
   EXPECT_CALL(stream_encoder_, encodeTrailers(_)).Times(0);
   stream->sendTrailers(trailers);
+  dispatcher_.clearDeferredDeleteList();
 }
 
 // Validate behavior when the stream's onHeaders() callback performs a stream
@@ -2195,6 +2224,18 @@ TEST_F(AsyncClientImplTest, DumpState) {
   EXPECT_CALL(stream_callbacks_, onReset());
 }
 
+TEST_F(AsyncClientImplTest, ParentStreamInfo) {
+  NiceMock<StreamInfo::MockStreamInfo> parent_stream_info;
+  auto options = AsyncClient::StreamOptions();
+  options.parent_context.stream_info = &parent_stream_info;
+  AsyncClient::Stream* stream = client_.start(stream_callbacks_, options);
+  EXPECT_TRUE(stream->streamInfo().parentStreamInfo().has_value());
+  EXPECT_EQ(stream->streamInfo().parentStreamInfo().ptr(),
+            dynamic_cast<const StreamInfo::StreamInfo*>(&parent_stream_info));
+  stream->streamInfo().clearParentStreamInfo();
+  EXPECT_FALSE(stream->streamInfo().parentStreamInfo().has_value());
+}
+
 } // namespace
 
 // Must not be in anonymous namespace for friend to work.
@@ -2207,7 +2248,7 @@ public:
     auto policy_or_error =
         Router::RetryPolicyImpl::create(proto_policy, ProtobufMessage::getNullValidationVisitor(),
                                         factory_context, client_.factory_context_);
-    THROW_IF_STATUS_NOT_OK(policy_or_error, throw);
+    THROW_IF_NOT_OK_REF(policy_or_error.status());
     retry_policy_ = std::move(policy_or_error.value());
     EXPECT_TRUE(retry_policy_.get());
 
@@ -2245,7 +2286,7 @@ public:
     auto policy_or_error =
         Router::RetryPolicyImpl::create(proto_policy, ProtobufMessage::getNullValidationVisitor(),
                                         factory_context, client_.factory_context_);
-    THROW_IF_STATUS_NOT_OK(policy_or_error, throw);
+    THROW_IF_NOT_OK_REF(policy_or_error.status());
     retry_policy_ = std::move(policy_or_error.value());
     EXPECT_TRUE(retry_policy_.get());
 

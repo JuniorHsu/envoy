@@ -2293,6 +2293,9 @@ TEST_F(LuaHttpFilterTest, InspectStreamInfoDowstreamSslConnection) {
         request_handle:logTrace(table.concat(request_handle:streamInfo():downstreamSslConnection():dnsSansPeerCertificate(), ","))
         request_handle:logTrace(table.concat(request_handle:streamInfo():downstreamSslConnection():dnsSansLocalCertificate(), ","))
 
+        request_handle:logTrace(table.concat(request_handle:streamInfo():downstreamSslConnection():oidsPeerCertificate(), ","))
+        request_handle:logTrace(table.concat(request_handle:streamInfo():downstreamSslConnection():oidsLocalCertificate(), ","))
+
         request_handle:logTrace(request_handle:streamInfo():downstreamSslConnection():ciphersuiteId())
 
         request_handle:logTrace(request_handle:streamInfo():downstreamSslConnection():validFromPeerCertificate())
@@ -2303,6 +2306,8 @@ TEST_F(LuaHttpFilterTest, InspectStreamInfoDowstreamSslConnection) {
         request_handle:logTrace(request_handle:streamInfo():downstreamSslConnection():serialNumberPeerCertificate())
         request_handle:logTrace(request_handle:streamInfo():downstreamSslConnection():issuerPeerCertificate())
         request_handle:logTrace(request_handle:streamInfo():downstreamSslConnection():subjectPeerCertificate())
+        request_handle:logTrace(request_handle:streamInfo():downstreamSslConnection():parsedSubjectPeerCertificate():commonName())
+        request_handle:logTrace(table.concat(request_handle:streamInfo():downstreamSslConnection():parsedSubjectPeerCertificate():organizationName(), ","))
         request_handle:logTrace(request_handle:streamInfo():downstreamSslConnection():ciphersuiteString())
         request_handle:logTrace(request_handle:streamInfo():downstreamSslConnection():tlsVersion())
         request_handle:logTrace(request_handle:streamInfo():downstreamSslConnection():urlEncodedPemEncodedPeerCertificate())
@@ -2345,6 +2350,14 @@ TEST_F(LuaHttpFilterTest, InspectStreamInfoDowstreamSslConnection) {
   EXPECT_CALL(*filter_,
               scriptLog(spdlog::level::trace, StrEq("local-dns-sans-1,local-dns-sans-2")));
 
+  const std::vector<std::string> peer_oids{"2.5.29.14", "1.2.840.113635.100"};
+  EXPECT_CALL(*connection_info, oidsPeerCertificate()).WillOnce(Return(peer_oids));
+  EXPECT_CALL(*filter_, scriptLog(spdlog::level::trace, StrEq("2.5.29.14,1.2.840.113635.100")));
+
+  const std::vector<std::string> local_oids{"2.5.29.14", "2.5.29.15", "2.5.29.19"};
+  EXPECT_CALL(*connection_info, oidsLocalCertificate()).WillOnce(Return(local_oids));
+  EXPECT_CALL(*filter_, scriptLog(spdlog::level::trace, StrEq("2.5.29.14,2.5.29.15,2.5.29.19")));
+
   const std::string subject_local = "subject-local";
   EXPECT_CALL(*connection_info, subjectLocalCertificate()).WillOnce(ReturnRef(subject_local));
   EXPECT_CALL(*filter_, scriptLog(spdlog::level::trace, StrEq(subject_local)));
@@ -2378,6 +2391,16 @@ TEST_F(LuaHttpFilterTest, InspectStreamInfoDowstreamSslConnection) {
   const std::string peer_cert_subject = "peer-cert-subject";
   EXPECT_CALL(*connection_info, subjectPeerCertificate()).WillOnce(ReturnRef(peer_cert_subject));
   EXPECT_CALL(*filter_, scriptLog(spdlog::level::trace, StrEq(peer_cert_subject)));
+
+  Ssl::ParsedX509Name parsed_subject;
+  parsed_subject.commonName_ = "Test CN";
+  parsed_subject.organizationName_.push_back("Test O1");
+  parsed_subject.organizationName_.push_back("Test O2");
+  Ssl::ParsedX509NameOptConstRef const_parsed_subject(parsed_subject);
+  EXPECT_CALL(*connection_info, parsedSubjectPeerCertificate())
+      .WillRepeatedly(Return(const_parsed_subject));
+  EXPECT_CALL(*filter_, scriptLog(spdlog::level::trace, StrEq("Test CN")));
+  EXPECT_CALL(*filter_, scriptLog(spdlog::level::trace, StrEq("Test O1,Test O2")));
 
   const std::string cipher_suite = "cipher-suite";
   EXPECT_CALL(*connection_info, ciphersuiteString()).WillOnce(Return(cipher_suite));

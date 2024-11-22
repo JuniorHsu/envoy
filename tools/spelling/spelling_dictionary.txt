@@ -35,6 +35,7 @@ BBR
 BIDIRECTIONAL
 DBPE
 Digext
+CCL
 ECN
 ECS
 EKS
@@ -65,6 +66,8 @@ DEVAPP
 DEVAPPS
 DEVRESTRICTED
 CIO
+cbegin
+cend
 chr
 deadcode
 DFP
@@ -184,6 +187,7 @@ OWS
 Preconnecting
 RCVBUF
 RTCP
+RTLD
 RTP
 SOH
 SPC
@@ -322,6 +326,7 @@ IANA
 IDL
 IETF
 IFADDRS
+IMUsed
 INADDR
 INET
 INVAL
@@ -402,6 +407,7 @@ NOAUTH
 NOCHECKRESP
 NODATA
 NODELAY
+NODELETE
 NOLINT
 NOLINTNEXTLINE
 NONAME
@@ -420,6 +426,9 @@ middlewildcard
 monostate
 mpd
 mutators
+mybucket
+myobject
+myproject
 na
 oghttp
 OID
@@ -471,6 +480,7 @@ RDS
 README
 RECVDSTADDR
 RECVPKTINFO
+RECVTOS
 REFNIL
 REQ
 REUSEADDR
@@ -818,6 +828,9 @@ dgst
 dir
 dirname
 djb
+dlclose
+dlopen
+dlsym
 downcalls
 downcasted
 downcased
@@ -1329,6 +1342,7 @@ rollout
 roundtrip
 rpcs
 rq
+rtest
 rtrim
 rtt
 ruleset
@@ -1565,6 +1579,7 @@ virtualize
 virtualized
 vptr
 vtable
+vtest
 vtt
 wakeup
 wakeups
@@ -1624,3 +1639,4 @@ NAT
 NXDOMAIN
 DNAT
 RSP
+EWMA

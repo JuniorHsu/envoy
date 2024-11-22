@@ -31,6 +31,7 @@
 #include "source/common/common/utility.h"
 #include "source/common/config/utility.h"
 #include "source/common/config/well_known_names.h"
+#include "source/common/config/xds_manager_impl.h"
 #include "source/common/config/xds_resource.h"
 #include "source/common/http/codes.h"
 #include "source/common/http/headers.h"
@@ -361,7 +362,7 @@ absl::Status InstanceUtil::loadBootstrapConfig(
   }
 
   if (!config_path.empty()) {
-    MessageUtil::loadFromFile(config_path, bootstrap, validation_visitor, api);
+    RETURN_IF_NOT_OK(MessageUtil::loadFromFile(config_path, bootstrap, validation_visitor, api));
   }
   if (!config_yaml.empty()) {
     envoy::config::bootstrap::v3::Bootstrap bootstrap_override;
@@ -503,7 +504,7 @@ absl::Status InstanceBase::initializeOrThrow(Network::Address::InstanceConstShar
   // stats.
   auto producer_or_error =
       Stats::TagProducerImpl::createTagProducer(bootstrap_.stats_config(), options_.statsTags());
-  RETURN_IF_STATUS_NOT_OK(producer_or_error);
+  RETURN_IF_NOT_OK_REF(producer_or_error.status());
   stats_store_.setTagProducer(std::move(producer_or_error.value()));
   stats_store_.setStatsMatcher(std::make_unique<Stats::StatsMatcherImpl>(
       bootstrap_.stats_config(), stats_store_.symbolTable(), server_contexts_));
@@ -720,6 +721,8 @@ absl::Status InstanceBase::initializeOrThrow(Network::Address::InstanceConstShar
     auto typed_admin = dynamic_cast<AdminImpl*>(admin_.get());
     RELEASE_ASSERT(typed_admin != nullptr, "Admin implementation is not an AdminImpl.");
     initial_config.initAdminAccessLog(bootstrap_, typed_admin->factoryContext());
+    ENVOY_LOG(info, "Starting admin HTTP server at {}",
+              initial_config.admin().address()->asString());
     admin_->startHttpListener(initial_config.admin().accessLogs(), initial_config.admin().address(),
                               initial_config.admin().socketOptions());
 #else
@@ -740,6 +743,11 @@ absl::Status InstanceBase::initializeOrThrow(Network::Address::InstanceConstShar
   ssl_context_manager_ =
       std::make_unique<Extensions::TransportSockets::Tls::ContextManagerImpl>(server_contexts_);
 
+  http_server_properties_cache_manager_ =
+      std::make_unique<Http::HttpServerPropertiesCacheManagerImpl>(
+          serverFactoryContext(), messageValidationContext().staticValidationVisitor(),
+          thread_local_);
+
   cluster_manager_factory_ = std::make_unique<Upstream::ProdClusterManagerFactory>(
       serverFactoryContext(), stats_store_, thread_local_, http_context_,
       [this]() -> Network::DnsResolverSharedPtr { return this->getOrCreateDnsResolver(); },
@@ -750,6 +758,11 @@ absl::Status InstanceBase::initializeOrThrow(Network::Address::InstanceConstShar
   // is constructed as part of the InstanceBase and then populated once
   // cluster_manager_factory_ is available.
   RETURN_IF_NOT_OK(config_.initialize(bootstrap_, *this, *cluster_manager_factory_));
+
+  // Create the xDS-Manager and pass the cluster manager that was created above.
+  ASSERT(config_.clusterManager());
+  xds_manager_ =
+      std::make_unique<Config::XdsManagerImpl>(*config_.clusterManager(), validation_context_);
 
   // Instruct the listener manager to create the LDS provider if needed. This must be done later
   // because various items do not yet exist when the listener manager is created.
@@ -823,7 +836,7 @@ void InstanceBase::onRuntimeReady() {
       // HDS does not support xDS-Failover.
       auto factory_or_error = Config::Utility::factoryForGrpcApiConfigSource(
           *async_client_manager_, hds_config, *stats_store_.rootScope(), false, 0);
-      THROW_IF_STATUS_NOT_OK(factory_or_error, throw);
+      THROW_IF_NOT_OK_REF(factory_or_error.status());
       hds_delegate_ = std::make_unique<Upstream::HdsDelegate>(
           serverFactoryContext(), *stats_store_.rootScope(),
           factory_or_error.value()->createUncachedRawAsyncClient(), stats_store_,
@@ -848,21 +861,22 @@ void InstanceBase::onRuntimeReady() {
 
 void InstanceBase::startWorkers() {
   // The callback will be called after workers are started.
-  listener_manager_->startWorkers(makeOptRefFromPtr(worker_guard_dog_.get()), [this]() {
-    if (isShutdown()) {
-      return;
-    }
+  THROW_IF_NOT_OK(
+      listener_manager_->startWorkers(makeOptRefFromPtr(worker_guard_dog_.get()), [this]() {
+        if (isShutdown()) {
+          return;
+        }
 
-    initialization_timer_->complete();
-    // Update server stats as soon as initialization is done.
-    updateServerStats();
-    workers_started_ = true;
-    hooks_.onWorkersStarted();
-    // At this point we are ready to take traffic and all listening ports are up. Notify our
-    // parent if applicable that they can stop listening and drain.
-    restarter_.drainParentListeners();
-    drain_manager_->startParentShutdownSequence();
-  });
+        initialization_timer_->complete();
+        // Update server stats as soon as initialization is done.
+        updateServerStats();
+        workers_started_ = true;
+        hooks_.onWorkersStarted();
+        // At this point we are ready to take traffic and all listening ports are up. Notify our
+        // parent if applicable that they can stop listening and drain.
+        restarter_.drainParentListeners();
+        drain_manager_->startParentShutdownSequence();
+      }));
 }
 
 Runtime::LoaderPtr InstanceUtil::createRuntime(Instance& server,

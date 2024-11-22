@@ -20,7 +20,7 @@ namespace Envoy {
 namespace Formatter {
 
 using StreamInfoFormatterProviderCreateFunc =
-    std::function<StreamInfoFormatterProviderPtr(const std::string&, absl::optional<size_t>)>;
+    std::function<StreamInfoFormatterProviderPtr(absl::string_view, absl::optional<size_t>)>;
 
 enum class DurationPrecision { Milliseconds, Microseconds, Nanoseconds };
 
@@ -33,7 +33,7 @@ class MetadataFormatter : public StreamInfoFormatterProvider {
 public:
   using GetMetadataFunction =
       std::function<const envoy::config::core::v3::Metadata*(const StreamInfo::StreamInfo&)>;
-  MetadataFormatter(const std::string& filter_namespace, const std::vector<std::string>& path,
+  MetadataFormatter(absl::string_view filter_namespace, const std::vector<absl::string_view>& path,
                     absl::optional<size_t> max_length, GetMetadataFunction get);
 
   // StreamInfoFormatterProvider
@@ -57,8 +57,9 @@ private:
  */
 class DynamicMetadataFormatter : public MetadataFormatter {
 public:
-  DynamicMetadataFormatter(const std::string& filter_namespace,
-                           const std::vector<std::string>& path, absl::optional<size_t> max_length);
+  DynamicMetadataFormatter(absl::string_view filter_namespace,
+                           const std::vector<absl::string_view>& path,
+                           absl::optional<size_t> max_length);
 };
 
 /**
@@ -66,8 +67,9 @@ public:
  */
 class ClusterMetadataFormatter : public MetadataFormatter {
 public:
-  ClusterMetadataFormatter(const std::string& filter_namespace,
-                           const std::vector<std::string>& path, absl::optional<size_t> max_length);
+  ClusterMetadataFormatter(absl::string_view filter_namespace,
+                           const std::vector<absl::string_view>& path,
+                           absl::optional<size_t> max_length);
 };
 
 /**
@@ -75,8 +77,8 @@ public:
  */
 class UpstreamHostMetadataFormatter : public MetadataFormatter {
 public:
-  UpstreamHostMetadataFormatter(const std::string& filter_namespace,
-                                const std::vector<std::string>& path,
+  UpstreamHostMetadataFormatter(absl::string_view filter_namespace,
+                                const std::vector<absl::string_view>& path,
                                 absl::optional<size_t> max_length);
 };
 
@@ -88,11 +90,11 @@ enum class FilterStateFormat { String, Proto, Field };
 class FilterStateFormatter : public StreamInfoFormatterProvider {
 public:
   static std::unique_ptr<FilterStateFormatter>
-  create(const std::string& format, const absl::optional<size_t>& max_length, bool is_upstream);
+  create(absl::string_view format, absl::optional<size_t> max_length, bool is_upstream);
 
-  FilterStateFormatter(const std::string& key, absl::optional<size_t> max_length,
+  FilterStateFormatter(absl::string_view key, absl::optional<size_t> max_length,
                        bool serialize_as_string, bool is_upstream = false,
-                       const std::string& field_name = "");
+                       absl::string_view field_name = {});
 
   // StreamInfoFormatterProvider
   absl::optional<std::string> format(const StreamInfo::StreamInfo&) const override;
@@ -108,7 +110,6 @@ private:
   const bool is_upstream_;
   FilterStateFormat format_;
   std::string field_name_;
-  StreamInfo::FilterState::ObjectFactory* factory_;
 };
 
 class CommonDurationFormatter : public StreamInfoFormatterProvider {
@@ -142,6 +143,12 @@ private:
       "DS_RX_BEG"; // Downstream request receiving begin.
   static constexpr absl::string_view LastDownstreamRxByteReceived =
       "DS_RX_END"; // Downstream request receiving end.
+  static constexpr absl::string_view UpstreamConnectStart =
+      "US_CX_BEG"; // Upstream TCP connection establishment start.
+  static constexpr absl::string_view UpstreamConnectEnd =
+      "US_CX_END"; // Upstream TCP connection establishment start.
+  static constexpr absl::string_view UpstreamTLSConnectEnd =
+      "US_HS_END"; // Upstream TLS connection establishment start.
   static constexpr absl::string_view FirstUpstreamTxByteSent =
       "US_TX_BEG"; // Upstream request sending begin.
   static constexpr absl::string_view LastUpstreamTxByteSent =
@@ -169,7 +176,7 @@ public:
       std::function<absl::optional<SystemTime>(const StreamInfo::StreamInfo& stream_info)>;
   using TimeFieldExtractorPtr = std::unique_ptr<TimeFieldExtractor>;
 
-  SystemTimeFormatter(const std::string& format, TimeFieldExtractorPtr f);
+  SystemTimeFormatter(absl::string_view format, TimeFieldExtractorPtr f, bool local_time = false);
 
   // StreamInfoFormatterProvider
   absl::optional<std::string> format(const StreamInfo::StreamInfo&) const override;
@@ -178,6 +185,8 @@ public:
 private:
   const Envoy::DateFormatter date_formatter_;
   const TimeFieldExtractorPtr time_field_extractor_;
+  // Whether use local time zone.
+  const bool local_time_;
 };
 
 /**
@@ -185,7 +194,7 @@ private:
  */
 class StartTimeFormatter : public SystemTimeFormatter {
 public:
-  StartTimeFormatter(const std::string& format);
+  StartTimeFormatter(absl::string_view format);
 };
 
 /**
@@ -194,7 +203,7 @@ public:
  */
 class DownstreamPeerCertVStartFormatter : public SystemTimeFormatter {
 public:
-  DownstreamPeerCertVStartFormatter(const std::string& format);
+  DownstreamPeerCertVStartFormatter(absl::string_view format);
 };
 
 /**
@@ -203,7 +212,7 @@ public:
  */
 class DownstreamPeerCertVEndFormatter : public SystemTimeFormatter {
 public:
-  DownstreamPeerCertVEndFormatter(const std::string& format);
+  DownstreamPeerCertVEndFormatter(absl::string_view format);
 };
 
 /**
@@ -212,7 +221,7 @@ public:
  */
 class UpstreamPeerCertVStartFormatter : public SystemTimeFormatter {
 public:
-  UpstreamPeerCertVStartFormatter(const std::string& format);
+  UpstreamPeerCertVStartFormatter(absl::string_view format);
 };
 
 /**
@@ -221,7 +230,7 @@ public:
  */
 class UpstreamPeerCertVEndFormatter : public SystemTimeFormatter {
 public:
-  UpstreamPeerCertVEndFormatter(const std::string& format);
+  UpstreamPeerCertVEndFormatter(absl::string_view format);
 };
 
 /**
@@ -229,7 +238,7 @@ public:
  */
 class EnvironmentFormatter : public StreamInfoFormatterProvider {
 public:
-  EnvironmentFormatter(const std::string& key, absl::optional<size_t> max_length);
+  EnvironmentFormatter(absl::string_view key, absl::optional<size_t> max_length);
 
   // StreamInfoFormatterProvider
   absl::optional<std::string> format(const StreamInfo::StreamInfo&) const override;

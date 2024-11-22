@@ -138,8 +138,11 @@ absl::StatusOr<Event::ScaledTimerType> parseTimerType(
     return Event::ScaledTimerType::HttpDownstreamIdleStreamTimeout;
   case Config::TRANSPORT_SOCKET_CONNECT:
     return Event::ScaledTimerType::TransportSocketConnectTimeout;
+  case Config::HTTP_DOWNSTREAM_CONNECTION_MAX:
+    return Event::ScaledTimerType::HttpDownstreamMaxConnectionTimeout;
   default:
-    return absl::InvalidArgumentError(fmt::format("Unknown timer type {}", config_timer_type));
+    return absl::InvalidArgumentError(
+        fmt::format("Unknown timer type {}", static_cast<int>(config_timer_type)));
   }
 }
 
