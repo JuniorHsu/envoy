@@ -3,6 +3,7 @@
 # will accept title case (e.g. lyft matches Lyft). Prefixes (e.g., un-) or suffixes (e.g. -ing)
 # are allowed for any otherwise correctly spelled word.
 ABI
+ACA
 ACK
 ACL
 AES
@@ -33,21 +34,29 @@ BC
 BEL
 BBR
 BIDIRECTIONAL
+BPALERMO
+CSP
 DBPE
+DSL
 Digext
 CCL
 ECN
 ECS
 EKS
 HARDCODE
+JINJA
 KEYID
+KOMET
 NID
 NIST
 OJRJN
 OWD
 Ookqqrvdts
 PKCS
+REGO
 RSASSA
+THTTP
+TLSV
 USECASES
 Uoy
 Wx
@@ -69,6 +78,7 @@ CIO
 cbegin
 cend
 chr
+cmp
 deadcode
 DFP
 Dynatrace
@@ -372,6 +382,7 @@ innerlist
 integrations
 iouring
 jkl
+judgement
 kbu
 labelled
 lang
@@ -424,6 +435,7 @@ OCSP
 OD
 ODCDS
 middlewildcard
+mohawk
 monostate
 mpd
 mutators
