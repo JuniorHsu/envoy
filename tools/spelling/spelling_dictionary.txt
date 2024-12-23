@@ -173,6 +173,7 @@ ETB
 ETX
 FS
 FIXME
+dont
 edwards
 funcname
 gperf
