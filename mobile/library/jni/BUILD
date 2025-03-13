@@ -1,4 +1,5 @@
 load("@envoy//bazel:envoy_build_system.bzl", "envoy_cc_library", "envoy_mobile_package")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_import")
 load("//bazel:android_debug_info.bzl", "android_debug_info")
 
 licenses(["notice"])  # Apache 2
@@ -48,6 +49,22 @@ envoy_cc_library(
     ],
 )
 
+envoy_cc_library(
+    name = "jni_init_lib",
+    srcs = [
+        "jni_init.cc",
+    ],
+    hdrs = [
+        "jni_init.h",
+    ],
+    repository = "@envoy",
+    deps = [
+        ":jni_helper_lib",
+        ":jni_utility_lib",
+    ],
+    alwayslink = True,
+)
+
 # Implementations of the various "native" Java methods for classes
 # in library/java/io/envoyproxy/envoymobile.
 envoy_cc_library(
@@ -58,6 +75,7 @@ envoy_cc_library(
     repository = "@envoy",
     deps = [
         ":android_network_utility_lib",
+        ":jni_init_lib",
         ":jni_utility_lib",
         "//library/cc:engine_builder_lib",
         "//library/common:internal_engine_lib",
@@ -123,6 +141,7 @@ cc_binary(
         "-lm",
         # See libpthread below.
         "-L$(GENDIR)/{}".format(package_name()),
+        "-latomic",
     ] + select({
         "@envoy//bazel:dbg_build": ["-Wl,--build-id=sha1"],
         "//conditions:default": [],

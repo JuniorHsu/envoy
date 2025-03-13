@@ -2,10 +2,6 @@ adisuissa:
   maintainer: true
   opsgenie: Adi
   slack: UT17EMMTP
-alyssawilk:
-  maintainer: true
-  opsgenie: Alyssa
-  slack: U78RP48V9
 botengyao:
   maintainer: true
   opsgenie: Boteng
@@ -59,10 +55,6 @@ RyanTheOptimist:
 silverstar194:
   first-pass: true
   slack: U03LNPC8JN9
-soulxu:
-  maintainer: true
-  opsgenie: Hejie
-  slack: U01GNQ3B8AY
 tyxia:
   maintainer: true
   opsgenie: Tianyu
@@ -79,3 +71,7 @@ zuercher:
   maintainer: true
   opsgenie: Stephan
   slack: U78J72Q82
+tonya11en:
+  maintainer: true
+  opsgenie: Tony
+  slack: U989BG2CW

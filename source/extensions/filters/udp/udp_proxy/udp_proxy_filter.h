@@ -98,6 +98,7 @@ public:
   virtual const std::string& postPath() const PURE;
   virtual Http::HeaderEvaluator& headerEvaluator() const PURE;
   virtual uint32_t maxConnectAttempts() const PURE;
+  virtual const BackOffStrategyPtr& backoffStrategy() const PURE;
   virtual bool bufferEnabled() const PURE;
   virtual uint32_t maxBufferedDatagrams() const PURE;
   virtual uint64_t maxBufferedBytes() const PURE;
@@ -202,7 +203,7 @@ public:
    * @param ssl_info supplies the ssl information of the upstream connection.
    */
   virtual void onStreamReady(StreamInfo::StreamInfo* info, std::unique_ptr<HttpUpstream>&& upstream,
-                             Upstream::HostDescriptionConstSharedPtr& host,
+                             const Upstream::HostDescription& host,
                              const Network::ConnectionInfoProvider& address_provider,
                              Ssl::ConnectionInfoConstSharedPtr ssl_info) PURE;
 
@@ -215,7 +216,7 @@ public:
    */
   virtual void onStreamFailure(ConnectionPool::PoolFailureReason reason,
                                absl::string_view failure_reason,
-                               Upstream::HostDescriptionConstSharedPtr host) PURE;
+                               const Upstream::HostDescription& host) PURE;
 
   /**
    * Called to reset the idle timer.
@@ -417,13 +418,13 @@ public:
 
   // TunnelCreationCallbacks
   void onStreamSuccess(Http::RequestEncoder& request_encoder) override {
-    callbacks_->onStreamReady(upstream_info_, std::move(upstream_), upstream_host_,
+    callbacks_->onStreamReady(upstream_info_, std::move(upstream_), *upstream_host_,
                               request_encoder.getStream().connectionInfoProvider(), ssl_info_);
   }
 
   void onStreamFailure() override {
     callbacks_->onStreamFailure(ConnectionPool::PoolFailureReason::RemoteConnectionFailure, "",
-                                upstream_host_);
+                                *upstream_host_);
   }
 
   // Http::ConnectionPool::Callbacks
@@ -589,6 +590,7 @@ protected:
     void writeDownstream(Network::UdpRecvData& data);
     void resetIdleTimer();
 
+    virtual bool shouldCreateUpstream() PURE;
     virtual bool createUpstream() PURE;
     virtual void writeUpstream(Network::UdpRecvData& data) PURE;
     virtual void onIdleTimer() PURE;
@@ -602,7 +604,7 @@ protected:
     bool onContinueFilterChain(ActiveReadFilter* filter);
     void onInjectReadDatagramToFilterChain(ActiveReadFilter* filter, Network::UdpRecvData& data);
     void onInjectWriteDatagramToFilterChain(ActiveWriteFilter* filter, Network::UdpRecvData& data);
-    void onSessionComplete();
+    virtual void onSessionComplete();
 
     // SessionFilters::FilterChainFactoryCallbacks
     void addReadFilter(ReadFilterSharedPtr filter) override {
@@ -682,6 +684,7 @@ protected:
     ~UdpActiveSession() override = default;
 
     // ActiveSession
+    bool shouldCreateUpstream() override;
     bool createUpstream() override;
     void writeUpstream(Network::UdpRecvData& data) override;
     void onIdleTimer() override;
@@ -690,7 +693,7 @@ protected:
     void processPacket(Network::Address::InstanceConstSharedPtr local_address,
                        Network::Address::InstanceConstSharedPtr peer_address,
                        Buffer::InstancePtr buffer, MonotonicTime receive_time, uint8_t tos,
-                       Buffer::RawSlice saved_csmg) override;
+                       Buffer::OwnedImpl saved_csmg) override;
 
     uint64_t maxDatagramSize() const override {
       return filter_.config_->upstreamSocketConfig().max_rx_datagram_size_;
@@ -740,9 +743,11 @@ protected:
     ~TunnelingActiveSession() override = default;
 
     // ActiveSession
+    bool shouldCreateUpstream() override;
     bool createUpstream() override;
     void writeUpstream(Network::UdpRecvData& data) override;
     void onIdleTimer() override;
+    void onSessionComplete() override;
 
     // UpstreamTunnelCallbacks
     void onUpstreamEvent(Network::ConnectionEvent event) override;
@@ -752,12 +757,11 @@ protected:
 
     // HttpStreamCallbacks
     void onStreamReady(StreamInfo::StreamInfo*, std::unique_ptr<HttpUpstream>&&,
-                       Upstream::HostDescriptionConstSharedPtr&,
-                       const Network::ConnectionInfoProvider&,
+                       const Upstream::HostDescription&, const Network::ConnectionInfoProvider&,
                        Ssl::ConnectionInfoConstSharedPtr) override;
 
     void onStreamFailure(ConnectionPool::PoolFailureReason, absl::string_view,
-                         Upstream::HostDescriptionConstSharedPtr) override;
+                         const Upstream::HostDescription&) override;
 
     void resetIdleTimer() override { ActiveSession::resetIdleTimer(); }
 
@@ -768,7 +772,11 @@ protected:
     bool createConnectionPool();
     void maybeBufferDatagram(Network::UdpRecvData& data);
     void flushBuffer();
+    void onRetryTimer();
+    void resetRetryTimer();
+    void disableRetryTimer();
 
+    Event::TimerPtr retry_timer_;
     TunnelingConnectionPoolFactoryPtr conn_pool_factory_;
     std::unique_ptr<UdpLoadBalancerContext> load_balancer_context_;
     TunnelingConnectionPoolPtr conn_pool_;
@@ -859,7 +867,7 @@ protected:
       host_to_sessions_[host].emplace(session);
     }
 
-    Upstream::HostConstSharedPtr
+    Upstream::HostSelectionResponse
     chooseHost(const Network::Address::InstanceConstSharedPtr& peer_address,
                StreamInfo::StreamInfo* stream_info) const;
 

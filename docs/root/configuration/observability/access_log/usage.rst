@@ -569,6 +569,7 @@ HTTP only
   **DnsResolutionFailed**, **DF**, The request was terminated due to DNS resolution failure.
   **DropOverload**, **DO**, The request was terminated in addition to 503 response code due to :ref:`drop_overloads<envoy_v3_api_field_config.endpoint.v3.ClusterLoadAssignment.Policy.drop_overloads>`.
   **DownstreamRemoteReset**, **DR**, The response details are ``http2.remote_reset`` or ``http2.remote_refuse``.
+  **UnconditionalDropOverload**, **UDO**, The request was terminated in addition to 503 response code due to :ref:`drop_overloads<envoy_v3_api_field_config.endpoint.v3.ClusterLoadAssignment.Policy.drop_overloads>` is set to 100%.
 
 UDP
   Not implemented ("-").
@@ -1215,6 +1216,14 @@ UDP
   UDP
     Not implemented ("-").
 
+%TLS_JA3_FINGERPRINT%
+  HTTP/TCP/Thrift
+    The JA3 fingerprint (MD5 hash) of the TLS Client Hello message from the downstream connection.
+    Provides a way to fingerprint TLS clients based on various Client Hello parameters like cipher suites,
+    extensions, elliptic curves, etc. Will be ``-`` if TLS is not used or the handshake is incomplete.
+  UDP
+    Not implemented (``-``).
+
 .. _config_access_log_format_downstream_peer_cert_v_start:
 
 %DOWNSTREAM_PEER_CERT_V_START%
@@ -1374,3 +1383,14 @@ UDP
     The trace ID of the request. If the request does not have a trace ID, this will be an empty string.
   TCP/UDP
     Not implemented ("-").
+
+%QUERY_PARAM(X):Z%
+  HTTP
+    The value of the query parameter X. If the query parameter X is not present, '-' symbol will be used.
+    Z is an optional parameter denoting string truncation up to Z characters long.
+  TCP/UDP
+    Not implemented ("-").
+
+%CUSTOM_FLAGS%
+  Custom flags set into the stream info. This could be used to log any custom event from the filters.
+  Multiple flags are separated by comma.

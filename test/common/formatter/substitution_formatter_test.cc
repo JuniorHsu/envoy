@@ -49,24 +49,33 @@ namespace Envoy {
 namespace Formatter {
 namespace {
 
-using PlainStringFormatter = PlainStringFormatterBase<HttpFormatterContext>;
-using PlainNumberFormatter = PlainNumberFormatterBase<HttpFormatterContext>;
-
 // Helper class to test StreamInfoFormatter.
-class StreamInfoFormatter : public StreamInfoFormatterWrapper<HttpFormatterContext> {
+class StreamInfoFormatter : public FormatterProvider {
 public:
   StreamInfoFormatter(const std::string& command, const std::string& sub_command = "",
-                      absl::optional<size_t> max_length = absl::nullopt)
-      : StreamInfoFormatterWrapper<HttpFormatterContext>(nullptr) {
-    for (const auto& cmd : BuiltInStreamInfoCommandParserFactoryHelper::commandParsers()) {
-      auto formatter = cmd->parse(command, sub_command, max_length);
-      if (formatter) {
-        formatter_ = std::move(formatter);
-        return;
-      }
+                      absl::optional<size_t> max_length = absl::nullopt) {
+    DefaultBuiltInStreamInfoCommandParserFactory factory;
+    auto parser = factory.createCommandParser();
+    formatter_ = parser->parse(command, sub_command, max_length);
+    if (formatter_ == nullptr) {
+      throwEnvoyExceptionOrPanic(fmt::format("Not supported command in StreamInfo: {}", command));
     }
-    throwEnvoyExceptionOrPanic(fmt::format("Not supported field in StreamInfo: {}", command));
   }
+
+  // FormatterProvider
+  absl::optional<std::string>
+  formatWithContext(const Context& context,
+                    const StreamInfo::StreamInfo& stream_info) const override {
+    return formatter_->formatWithContext(context, stream_info);
+  }
+  ProtobufWkt::Value
+  formatValueWithContext(const Context& context,
+                         const StreamInfo::StreamInfo& stream_info) const override {
+    return formatter_->formatValueWithContext(context, stream_info);
+  }
+
+private:
+  FormatterProviderPtr formatter_;
 };
 
 class TestSerializedUnknownFilterState : public StreamInfo::FilterState::Object {
@@ -572,6 +581,15 @@ TEST(SubstitutionFormatterTest, streamInfoFormatter) {
   }
 
   {
+    StreamInfoFormatter custom_flags_format("CUSTOM_FLAGS");
+    stream_info.addCustomFlag("flag1");
+    stream_info.addCustomFlag("flag2");
+    EXPECT_EQ("flag1,flag2", custom_flags_format.formatWithContext({}, stream_info));
+    EXPECT_THAT(custom_flags_format.formatValueWithContext({}, stream_info),
+                ProtoEq(ValueUtil::stringValue("flag1,flag2")));
+  }
+
+  {
     StreamInfoFormatter response_flags_format("RESPONSE_FLAGS");
     stream_info.setResponseFlag(StreamInfo::CoreResponseFlag::LocalReset);
     EXPECT_EQ("LR", response_flags_format.formatWithContext({}, stream_info));
@@ -724,23 +742,6 @@ TEST(SubstitutionFormatterTest, streamInfoFormatter) {
     EXPECT_EQ(absl::nullopt, upstream_format.formatWithContext({}, stream_info));
     EXPECT_THAT(upstream_format.formatValueWithContext({}, stream_info),
                 ProtoEq(ValueUtil::nullValue()));
-
-    // Reset to default one.
-    stream_info.upstreamInfo()->setUpstreamRemoteAddress(default_upstream_remote_address);
-  }
-
-  {
-    TestScopedRuntime scoped_runtime;
-    scoped_runtime.mergeValues(
-        {{"envoy.reloadable_features.upstream_remote_address_use_connection", "false"}});
-
-    StreamInfoFormatter upstream_format("UPSTREAM_REMOTE_ADDRESS");
-
-    // Has valid upstream remote address but it would not be used because of the runtime feature.
-    stream_info.upstreamInfo()->setUpstreamRemoteAddress(test_upstream_remote_address);
-    EXPECT_EQ("10.0.0.1:443", upstream_format.formatWithContext({}, stream_info));
-    EXPECT_THAT(upstream_format.formatValueWithContext({}, stream_info),
-                ProtoEq(ValueUtil::stringValue("10.0.0.1:443")));
 
     // Reset to default one.
     stream_info.upstreamInfo()->setUpstreamRemoteAddress(default_upstream_remote_address);
@@ -2714,6 +2715,34 @@ TEST(SubstitutionFormatterTest, requestHeaderFormatter) {
   }
 }
 
+TEST(SubstitutionFormatterTest, QueryPraameterFormatter) {
+  StreamInfo::MockStreamInfo stream_info;
+  Http::TestRequestHeaderMapImpl request_header{{":method", "GET"}, {":path", "/path?x=xxxxxx"}};
+
+  HttpFormatterContext formatter_context(&request_header);
+
+  {
+    QueryParameterFormatter formatter("x", absl::optional<size_t>());
+    EXPECT_EQ("xxxxxx", formatter.formatWithContext(formatter_context, stream_info));
+    EXPECT_THAT(formatter.formatValueWithContext(formatter_context, stream_info),
+                ProtoEq(ValueUtil::stringValue("xxxxxx")));
+  }
+
+  {
+    QueryParameterFormatter formatter("y", absl::optional<size_t>());
+    EXPECT_EQ(absl::nullopt, formatter.formatWithContext(formatter_context, stream_info));
+    EXPECT_THAT(formatter.formatValueWithContext(formatter_context, stream_info),
+                ProtoEq(ValueUtil::nullValue()));
+  }
+
+  {
+    QueryParameterFormatter formatter("x", absl::optional<size_t>(2));
+    EXPECT_EQ("xx", formatter.formatWithContext(formatter_context, stream_info));
+    EXPECT_THAT(formatter.formatValueWithContext(formatter_context, stream_info),
+                ProtoEq(ValueUtil::stringValue("xx")));
+  }
+}
+
 TEST(SubstitutionFormatterTest, headersByteSizeFormatter) {
   StreamInfo::MockStreamInfo stream_info;
   Http::TestRequestHeaderMapImpl request_header{{":method", "GET"}, {":path", "/"}};
@@ -4518,6 +4547,7 @@ TEST(SubstitutionFormatterTest, JsonFormatterTest) {
       plain_string: plain_string_value
       protocol: '%PROTOCOL%'
     request_key: '%REQ(key_1)%_@!!!_"_%REQ(key_2)%'
+    key: {}
   )EOF",
                             key_mapping);
 
@@ -4537,7 +4567,8 @@ TEST(SubstitutionFormatterTest, JsonFormatterTest) {
       "plain_string": "plain_string_value",
       "protocol": "HTTP/1.1"
     },
-    "request_key": "value_1_@!!!_\"_value_with_quotes_\"_"
+    "request_key": "value_1_@!!!_\"_value_with_quotes_\"_",
+    "key": null
   })EOF";
 
   JsonFormatterImpl formatter(key_mapping, false);
@@ -4961,8 +4992,7 @@ TEST(SubstitutionFormatterTest, ParserFailures) {
       "%START_TIME(%4On%)%"};
 
   for (const std::string& test_case : test_cases) {
-    EXPECT_THROW(THROW_OR_RETURN_VALUE(parser.parse(test_case),
-                                       std::vector<FormatterProviderBasePtr<HttpFormatterContext>>),
+    EXPECT_THROW(THROW_OR_RETURN_VALUE(parser.parse(test_case), std::vector<FormatterProviderPtr>),
                  EnvoyException)
         << test_case;
   }

@@ -30,16 +30,6 @@ getUpstreamRemoteAddress(const StreamInfo::StreamInfo& stream_info) {
     return nullptr;
   }
 
-  // TODO(wbpcode): remove this after the flag is removed.
-  const bool use_upstream_remote_address = Runtime::runtimeFeatureEnabled(
-      "envoy.reloadable_features.upstream_remote_address_use_connection");
-  if (!use_upstream_remote_address) {
-    if (auto host = opt_ref->upstreamHost(); host != nullptr) {
-      return host->address();
-    }
-    return nullptr;
-  }
-
   if (auto addr = opt_ref->upstreamRemoteAddress(); addr != nullptr) {
     return addr;
   }
@@ -1058,6 +1048,14 @@ const StreamInfoFormatterProviderLookupTable& getKnownStreamInfoFormatterProvide
                                [](absl::string_view sub_command, absl::optional<size_t>) {
                                  return CommonDurationFormatter::create(sub_command);
                                }}},
+                             {"CUSTOM_FLAGS",
+                              {CommandSyntaxChecker::COMMAND_ONLY,
+                               [](absl::string_view, absl::optional<size_t>) {
+                                 return std::make_unique<StreamInfoStringFormatterProvider>(
+                                     [](const StreamInfo::StreamInfo& stream_info) {
+                                       return std::string(stream_info.customFlags());
+                                     });
+                               }}},
                              {"RESPONSE_FLAGS",
                               {CommandSyntaxChecker::COMMAND_ONLY,
                                [](absl::string_view, absl::optional<size_t>) {
@@ -2016,13 +2014,13 @@ const StreamInfoFormatterProviderLookupTable& getKnownStreamInfoFormatterProvide
                          });
 }
 
-class BuiltInStreamInfoCommandParser : public StreamInfoCommandParser {
+class BuiltInStreamInfoCommandParser : public CommandParser {
 public:
   BuiltInStreamInfoCommandParser() = default;
 
-  // StreamInfoCommandParser
-  StreamInfoFormatterProviderPtr parse(absl::string_view command, absl::string_view sub_command,
-                                       absl::optional<size_t> max_length) const override {
+  // CommandParser
+  FormatterProviderPtr parse(absl::string_view command, absl::string_view sub_command,
+                             absl::optional<size_t> max_length) const override {
 
     auto it = getKnownStreamInfoFormatterProviders().find(command);
 
@@ -2043,13 +2041,11 @@ std::string DefaultBuiltInStreamInfoCommandParserFactory::name() const {
   return "envoy.built_in_formatters.stream_info.default";
 }
 
-StreamInfoCommandParserPtr
-DefaultBuiltInStreamInfoCommandParserFactory::createCommandParser() const {
+CommandParserPtr DefaultBuiltInStreamInfoCommandParserFactory::createCommandParser() const {
   return std::make_unique<BuiltInStreamInfoCommandParser>();
 }
 
-REGISTER_FACTORY(DefaultBuiltInStreamInfoCommandParserFactory,
-                 BuiltInStreamInfoCommandParserFactory);
+REGISTER_FACTORY(DefaultBuiltInStreamInfoCommandParserFactory, BuiltInCommandParserFactory);
 
 } // namespace Formatter
 } // namespace Envoy

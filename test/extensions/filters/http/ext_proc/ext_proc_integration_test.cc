@@ -273,12 +273,12 @@ protected:
     EXPECT_EQ(std::to_string(status_code), response.headers().getStatusValue());
   }
 
-  void handleUpstreamRequest(bool add_content_length = false) {
+  void handleUpstreamRequest(bool add_content_length = false, int status_code = 200) {
     ASSERT_TRUE(fake_upstreams_[0]->waitForHttpConnection(*dispatcher_, fake_upstream_connection_));
     ASSERT_TRUE(fake_upstream_connection_->waitForNewStream(*dispatcher_, upstream_request_));
     ASSERT_TRUE(upstream_request_->waitForEndStream(*dispatcher_));
     Http::TestResponseHeaderMapImpl response_headers =
-        Http::TestResponseHeaderMapImpl{{":status", "200"}};
+        Http::TestResponseHeaderMapImpl{{":status", std::to_string(status_code)}};
     uint64_t content_length = 100;
     if (add_content_length) {
       response_headers.setContentLength(content_length);
@@ -862,7 +862,7 @@ TEST_P(ExtProcIntegrationTest, GetAndCloseStreamWithTracing) {
     ext_proc_span.set_operation_name(
         "async envoy.service.ext_proc.v3.ExternalProcessor.Process egress");
     ext_proc_span.set_context_injected(true);
-    ext_proc_span.set_sampled(true);
+    ext_proc_span.set_sampled(false);
     ext_proc_span.mutable_tags()->insert({"grpc.status_code", "0"});
     ext_proc_span.mutable_tags()->insert({"upstream_cluster", "ext_proc_server_0"});
     if (IsEnvoyGrpc()) {
@@ -928,7 +928,7 @@ TEST_P(ExtProcIntegrationTest, GetAndFailStreamWithTracing) {
     ext_proc_span.set_operation_name(
         "async envoy.service.ext_proc.v3.ExternalProcessor.Process egress");
     ext_proc_span.set_context_injected(true);
-    ext_proc_span.set_sampled(true);
+    ext_proc_span.set_sampled(false);
     ext_proc_span.mutable_tags()->insert({"grpc.status_code", "2"});
     ext_proc_span.mutable_tags()->insert({"error", "true"});
     ext_proc_span.mutable_tags()->insert({"upstream_cluster", "ext_proc_server_0"});
@@ -1086,6 +1086,81 @@ TEST_P(ExtProcIntegrationTest, GetAndFailStreamOnResponse) {
   processor_stream_->finishGrpcStream(Grpc::Status::Internal);
 
   verifyDownstreamResponse(*response, 500);
+}
+
+TEST_P(ExtProcIntegrationTest, OnlyRequestHeadersServerHalfClosesFirst) {
+  // Skip the header processing on response path.
+  proto_config_.mutable_processing_mode()->set_response_header_mode(ProcessingMode::SKIP);
+  initializeConfig();
+  HttpIntegrationTest::initialize();
+  auto response = sendDownstreamRequestWithBody("body", absl::nullopt);
+
+  processRequestHeadersMessage(
+      *grpc_upstreams_[0], true, [](const HttpHeaders&, HeadersResponse& headers_resp) {
+        // The response does not really matter, it just needs to be non-empty.
+        auto response_header_mutation = headers_resp.mutable_response()->mutable_header_mutation();
+        auto* mut1 = response_header_mutation->add_set_headers();
+        mut1->mutable_header()->set_key("x-new-header");
+        mut1->mutable_header()->set_raw_value("new");
+        return true;
+      });
+  // ext_proc is configured to only send request headers. In this case, server indicates that it is
+  // not expecting any more messages from ext_proc filter and half-closes the stream.
+  processor_stream_->finishGrpcStream(Grpc::Status::Ok);
+
+  // ext_proc will immediately close side stream in this case, because by default Envoy gRPC client
+  // will reset the stream if the server half-closes before the client. Note that the ext_proc
+  // filter has not yet half-closed the sidestream, since it is doing it during its destruction.
+  // This is expected behavior for gRPC protocol.
+  EXPECT_TRUE(processor_stream_->waitForReset());
+
+  ASSERT_TRUE(fake_upstreams_[0]->waitForHttpConnection(*dispatcher_, fake_upstream_connection_));
+  ASSERT_TRUE(fake_upstream_connection_->waitForNewStream(*dispatcher_, upstream_request_));
+  ASSERT_TRUE(upstream_request_->waitForEndStream(*dispatcher_));
+  EXPECT_EQ(upstream_request_->bodyLength(), 4);
+
+  EXPECT_THAT(upstream_request_->headers(), SingleHeaderValueIs("x-new-header", "new"));
+
+  upstream_request_->encodeHeaders(Http::TestResponseHeaderMapImpl{{":status", "200"}}, false);
+  upstream_request_->encodeData(100, true);
+
+  verifyDownstreamResponse(*response, 200);
+}
+
+TEST_P(ExtProcIntegrationTest, ServerHalfClosesAfterHeaders) {
+  // Configure ext_proc to send both headers and body
+  proto_config_.mutable_processing_mode()->set_request_header_mode(ProcessingMode::SEND);
+  proto_config_.mutable_processing_mode()->set_request_body_mode(ProcessingMode::STREAMED);
+  proto_config_.mutable_processing_mode()->set_request_trailer_mode(ProcessingMode::SKIP);
+  proto_config_.mutable_processing_mode()->set_response_header_mode(ProcessingMode::SKIP);
+
+  initializeConfig();
+  HttpIntegrationTest::initialize();
+
+  codec_client_ = makeHttpConnection(lookupPort("http"));
+  Http::TestRequestHeaderMapImpl headers;
+  HttpTestUtility::addDefaultHeaders(headers);
+  auto encoder_decoder = codec_client_->startRequest(headers);
+  request_encoder_ = &encoder_decoder.first;
+  processRequestHeadersMessage(*grpc_upstreams_[0], true,
+                               [](const HttpHeaders& headers, HeadersResponse&) {
+                                 EXPECT_FALSE(headers.end_of_stream());
+                                 return true;
+                               });
+
+  // However right after processing headers, half-close the stream indicating that server
+  // is not interested in the request body.
+  processor_stream_->finishGrpcStream(Grpc::Status::Ok);
+  processor_stream_->encodeResetStream();
+
+  // Even if the gRPC server half-closed, processing of the main request still continues.
+  // Verify that data made it to upstream.
+  codec_client_->sendData(*request_encoder_, 10, true);
+  IntegrationStreamDecoderPtr response = std::move(encoder_decoder.second);
+
+  handleUpstreamRequest();
+  EXPECT_EQ(upstream_request_->bodyLength(), 10);
+  verifyDownstreamResponse(*response, 200);
 }
 
 // Test the filter using the default configuration by connecting to
@@ -2106,6 +2181,11 @@ TEST_P(ExtProcIntegrationTest, GetAndRespondImmediately) {
     hdr2->mutable_header()->set_raw_value("application/json");
   });
 
+  // ext_proc will immediately close side stream in this case, which causes it to be reset,
+  // since side stream codec had not yet observed server trailers.
+  // TODO(yanavlasov): Separate lifetimes of ext_proc and sidestream.
+  EXPECT_TRUE(processor_stream_->waitForReset());
+
   verifyDownstreamResponse(*response, 401);
   EXPECT_THAT(response->headers(), SingleHeaderValueIs("x-failure-reason", "testing"));
   EXPECT_THAT(response->headers(), SingleHeaderValueIs("content-type", "application/json"));
@@ -2170,6 +2250,63 @@ TEST_P(ExtProcIntegrationTest, GetAndRespondImmediatelyOnResponse) {
 
   verifyDownstreamResponse(*response, 401);
   EXPECT_EQ("{\"reason\": \"Not authorized\"}", response->body());
+}
+
+// Test immediate_response behavior with STREAMED request body. Even though the
+// headers have been processed, an immediate response on a request body chunk
+// should still be seen by the downstream.
+TEST_P(ExtProcIntegrationTest, GetAndRespondImmediatelyOnStreamedRequestBody) {
+  proto_config_.mutable_processing_mode()->set_request_body_mode(ProcessingMode::STREAMED);
+  initializeConfig();
+  HttpIntegrationTest::initialize();
+  auto response = sendDownstreamRequestWithBody("Evil content!", absl::nullopt);
+  processRequestHeadersMessage(
+      *grpc_upstreams_[0], true, [](const HttpHeaders&, HeadersResponse& resp) {
+        auto* hdr = resp.mutable_response()->mutable_header_mutation()->add_set_headers();
+        hdr->mutable_header()->set_key("foo");
+        hdr->mutable_header()->set_raw_value("bar");
+        return true;
+      });
+  processAndRespondImmediately(*grpc_upstreams_[0], false, [](ImmediateResponse& immediate) {
+    immediate.mutable_status()->set_code(envoy::type::v3::StatusCode::BadRequest);
+    immediate.set_body("{\"reason\": \"Request too evil\"}");
+    immediate.set_details("Failed because I don't like this payload");
+  });
+  verifyDownstreamResponse(*response, 400);
+  EXPECT_EQ("{\"reason\": \"Request too evil\"}", response->body());
+  // The previously added request header is not sent to the client.
+  EXPECT_THAT(response->headers(), HasNoHeader("foo"));
+}
+
+// Test immediate_response behavior with STREAMED response body.
+//
+// In this test the client sees the immediate response, but that may not always
+// be the case: "If a response has already started -- for example, if this
+// message is sent response to a ``response_body`` message -- then this will
+// either ship the reply directly to the downstream codec, or reset the stream."
+TEST_P(ExtProcIntegrationTest, GetAndRespondImmediatelyOnStreamedResponseBody) {
+  proto_config_.mutable_processing_mode()->set_response_body_mode(ProcessingMode::BUFFERED);
+  initializeConfig();
+  HttpIntegrationTest::initialize();
+  auto response = sendDownstreamRequest(absl::nullopt);
+  processRequestHeadersMessage(*grpc_upstreams_[0], true, absl::nullopt);
+  handleUpstreamRequest();
+  processResponseHeadersMessage(
+      *grpc_upstreams_[0], false, [](const HttpHeaders&, HeadersResponse& resp) {
+        auto* hdr = resp.mutable_response()->mutable_header_mutation()->add_set_headers();
+        hdr->mutable_header()->set_key("foo");
+        hdr->mutable_header()->set_raw_value("bar");
+        return true;
+      });
+  processAndRespondImmediately(*grpc_upstreams_[0], false, [](ImmediateResponse& immediate) {
+    immediate.mutable_status()->set_code(envoy::type::v3::StatusCode::BadRequest);
+    immediate.set_body("{\"reason\": \"Response too evil\"}");
+    immediate.set_details("Failed because I don't like this payload");
+  });
+  verifyDownstreamResponse(*response, 400);
+  EXPECT_EQ("{\"reason\": \"Response too evil\"}", response->body());
+  // The previously added response header is not sent to the client.
+  EXPECT_THAT(response->headers(), HasNoHeader("foo"));
 }
 
 // Test the filter with request body buffering enabled using
@@ -2554,7 +2691,7 @@ TEST_P(ExtProcIntegrationTest, RequestMessageTimeoutWithTracing) {
     ext_proc_span.set_operation_name(
         "async envoy.service.ext_proc.v3.ExternalProcessor.Process egress");
     ext_proc_span.set_context_injected(true);
-    ext_proc_span.set_sampled(true);
+    ext_proc_span.set_sampled(false);
     ext_proc_span.mutable_tags()->insert({"status", "canceled"});
     ext_proc_span.mutable_tags()->insert({"error", ""}); // not an error
     ext_proc_span.mutable_tags()->insert({"upstream_cluster", "ext_proc_server_0"});
@@ -5180,6 +5317,33 @@ TEST_P(ExtProcIntegrationTest, DuplexStreamedInBothDirection) {
   verifyDownstreamResponse(*response, 200);
 }
 
+// The ext_proc server sends out-of-order response causing Envoy to shutdown the external
+// processing.
+TEST_P(ExtProcIntegrationTest, ServerSendOutOfOrderResponseDuplexStreamed) {
+  const std::string body_sent(8 * 1024, 's');
+  // Enable FULL_DUPLEX_STREAMED body processing in both directions.
+  IntegrationStreamDecoderPtr response = initAndSendDataDuplexStreamedMode(body_sent, true, true);
+
+  // The ext_proc server receives the request headers and body.
+  ProcessingRequest header_request;
+  serverReceiveHeaderDuplexStreamed(header_request);
+  uint32_t total_req_body_msg = serverReceiveBodyDuplexStreamed(body_sent);
+
+  // The ext_proc server should send header response, but it sends back the body response,
+  // which is out-of-order. This cause Envoy to shut down the external processing, and
+  // send the buffered HTTP request headers to the upstream.
+  processor_stream_->startGrpcStream();
+  serverSendBodyRespDuplexStreamed(total_req_body_msg);
+
+  // The backend server processes the request and sends back a 400 response.
+  handleUpstreamRequest(false, 400);
+  // The body received by upstream server is expected to be empty.
+  EXPECT_EQ(upstream_request_->body().toString(), "");
+  // As the external processing is shut down, the response messages are not sent
+  // to the ext_proc server. Instead it is sent to the downstream directly.
+  verifyDownstreamResponse(*response, 400);
+}
+
 // The ext_proc server failed to send response in time trigger Envoy HCM stream_idle_timeout.
 TEST_P(ExtProcIntegrationTest, ServerWaitTooLongBeforeSendRespDuplexStreamed) {
   // Set HCM stream_idle_timeout to be 10s. Note one can also set the
@@ -5261,6 +5425,40 @@ TEST_P(ExtProcIntegrationTest, ModeOverrideDisallowed) {
 
   // ext_proc server still receive the body message even though body mode override was set to
   // ProcessingMode::NONE. It is because that ProcessingMode::NONE was not in allow list.
+  processRequestBodyMessage(*grpc_upstreams_[0], false, [](const HttpBody& body, BodyResponse&) {
+    EXPECT_TRUE(body.end_of_stream());
+    return true;
+  });
+  handleUpstreamRequest();
+  verifyDownstreamResponse(*response, 200);
+}
+
+TEST_P(ExtProcIntegrationTest, RequestHeaderModeIgnoredInModeOverrideComparison) {
+  proto_config_.mutable_processing_mode()->set_request_body_mode(ProcessingMode::STREAMED);
+  proto_config_.mutable_processing_mode()->set_response_header_mode(ProcessingMode::SKIP);
+  proto_config_.set_allow_mode_override(true);
+  // Configure mode override allow list.
+  auto* added_mode = proto_config_.add_allowed_override_modes();
+  added_mode->set_request_header_mode(ProcessingMode::SEND);
+  added_mode->set_request_body_mode(ProcessingMode::BUFFERED);
+  initializeConfig();
+  HttpIntegrationTest::initialize();
+
+  std::string body_str = std::string(10, 'a');
+  auto response = sendDownstreamRequestWithBody(body_str, absl::nullopt);
+
+  // Process request header message.
+  processGenericMessage(
+      *grpc_upstreams_[0], true, [](const ProcessingRequest&, ProcessingResponse& resp) {
+        resp.mutable_request_headers();
+        // request_header_mode doesn't match the only allowed_override_modes element, but it's fine.
+        resp.mutable_mode_override()->set_request_header_mode(ProcessingMode::SKIP);
+        resp.mutable_mode_override()->set_request_body_mode(ProcessingMode::BUFFERED);
+        return true;
+      });
+
+  // ext_proc server still receive the body message even though request header mode override doesn't
+  // match the only allowed mode's request_header_mode.
   processRequestBodyMessage(*grpc_upstreams_[0], false, [](const HttpBody& body, BodyResponse&) {
     EXPECT_TRUE(body.end_of_stream());
     return true;

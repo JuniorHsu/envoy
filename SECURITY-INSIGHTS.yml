@@ -12,7 +12,6 @@ project-lifecycle:
   core-maintainers:  # from https://github.com/envoyproxy/envoy/blob/main/OWNERS.md
   # Senior maintainers
   - github:mattklein123
-  - github:alyssawilk
   - github:zuercher
   - github:lizan
   - github:ggreenway
@@ -27,8 +26,8 @@ project-lifecycle:
   - github:keith
   - github:kyessenov
   - github:ravenblackx
-  - github:soulxu
   - github:nezdolik
+  - github:tonya11en
   - github:tyxia
 contribution-policy:
   accepts-pull-requests: true

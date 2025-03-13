@@ -70,6 +70,15 @@ adhoc
 alg
 bdqp
 bigdata
+CGROUP
+CROSSSLOT
+ECN
+ECS
+EKS
+Millicores
+NID
+NIST
+NORMALISATION
 bm
 BSON
 BPF
@@ -86,14 +95,11 @@ DEVRESTRICTED
 CIO
 cbegin
 cend
-<<<<<<< HEAD
 chr
 cmp
-=======
 comms
 concat
 constness
->>>>>>> main
 coordinatoro
 deadcode
 DFP
@@ -441,6 +447,7 @@ NOLINT
 NOLINTBEGIN
 NOLINTEND
 NOLINTNEXTLINE
+NOLOAD
 NONAME
 NONBLOCK
 NONCES
@@ -566,7 +573,9 @@ SPD
 SPDY
 SPIFFE
 SPKI
+SQE
 SQL
+SQPOLL
 SR
 SRCDIR
 SRDS
@@ -1074,6 +1083,8 @@ lightstep
 linearization
 linearize
 linearized
+linkability
+linkable
 linux
 livelock
 llvm
@@ -1232,6 +1243,7 @@ plaintext
 pluggable
 pointee
 poller
+polymorphism
 popen
 pos
 posix
@@ -1588,6 +1600,7 @@ upvalue
 uring
 urlencoded
 urls
+useragent
 userdata
 userinfo
 username

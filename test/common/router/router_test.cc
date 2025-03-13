@@ -85,8 +85,9 @@ public:
   RouterTest()
       : RouterTestBase(false, false, false, false, Protobuf::RepeatedPtrField<std::string>{}) {
     EXPECT_CALL(callbacks_, activeSpan()).WillRepeatedly(ReturnRef(span_));
-    ON_CALL(cm_.thread_local_cluster_, chooseHost(_))
-        .WillByDefault(Return(cm_.thread_local_cluster_.lb_.host_));
+    ON_CALL(cm_.thread_local_cluster_, chooseHost(_)).WillByDefault(Invoke([this] {
+      return Upstream::HostSelectionResponse{cm_.thread_local_cluster_.lb_.host_};
+    }));
   };
 
   void testRequestResponse(bool with_trailers, bool can_use_http3 = true) {
@@ -213,6 +214,15 @@ public:
               callbacks_.route_->virtual_host_.virtual_cluster_.stats().upstream_rq_total_.value());
   }
 };
+
+TEST_F(RouterTest, SenselessTestForCoverage) {
+  config_->timeSource();
+  Http::MockFilterChainManager mock_manager;
+  config_->createUpgradeFilterChain("", nullptr, mock_manager, Http::EmptyFilterChainOptions{});
+
+  router_->route();
+  router_->timeSource();
+}
 
 TEST_F(RouterTest, UpdateServerNameFilterStateWithoutHeaderOverride) {
   auto dummy_option = absl::make_optional<envoy::config::core::v3::UpstreamHttpProtocolOptions>();
@@ -847,6 +857,30 @@ TEST_F(RouterTest, DropOverloadDropped) {
                     .counter("upstream_rq_dropped")
                     .value());
   EXPECT_EQ(callbacks_.details(), "drop_overload");
+}
+
+// UnconditionalDropOverload drop test
+TEST_F(RouterTest, UnconditionalDropOverloadDropped) {
+  EXPECT_CALL(cm_.thread_local_cluster_, dropOverload()).WillRepeatedly(Return(UnitFloat(1.0)));
+  Http::TestResponseHeaderMapImpl response_headers{{":status", "503"},
+                                                   {"content-length", "27"},
+                                                   {"content-type", "text/plain"},
+                                                   {"x-envoy-unconditional-drop-overload", "true"}};
+  EXPECT_CALL(callbacks_, encodeHeaders_(HeaderMapEqualRef(&response_headers), false));
+  EXPECT_CALL(callbacks_, encodeData(_, true));
+  EXPECT_CALL(callbacks_.stream_info_,
+              setResponseFlag(StreamInfo::CoreResponseFlag::UnconditionalDropOverload));
+
+  Http::TestRequestHeaderMapImpl headers;
+  HttpTestUtility::addDefaultHeaders(headers);
+  router_->decodeHeaders(headers, true);
+  EXPECT_EQ(1U, cm_.thread_local_cluster_.cluster_.info_->load_report_stats_store_
+                    .counter("upstream_rq_drop_overload")
+                    .value());
+  EXPECT_EQ(1U, cm_.thread_local_cluster_.cluster_.info_->load_report_stats_store_
+                    .counter("upstream_rq_dropped")
+                    .value());
+  EXPECT_EQ(callbacks_.details(), "unconditional_drop_overload");
 }
 
 TEST_F(RouterTest, ResponseCodeDetailsSetByUpstream) {
@@ -4949,6 +4983,54 @@ TEST_P(RouterShadowingTest, ShadowCallbacksNotCalledInDestructor) {
   EXPECT_CALL(foo_request, cancel()).Times(0);
 }
 
+TEST_P(RouterShadowingTest, ShadowRequestCarriesParentContext) {
+  ShadowPolicyPtr policy = makeShadowPolicy("foo", "", "bar");
+  callbacks_.route_->route_entry_.shadow_policies_.push_back(policy);
+  ON_CALL(callbacks_, streamId()).WillByDefault(Return(43));
+
+  NiceMock<Http::MockRequestEncoder> encoder;
+  Http::ResponseDecoder* response_decoder = nullptr;
+  expectNewStreamWithImmediateEncoder(encoder, &response_decoder, Http::Protocol::Http10);
+
+  EXPECT_CALL(
+      runtime_.snapshot_,
+      featureEnabled("bar", testing::Matcher<const envoy::type::v3::FractionalPercent&>(Percent(0)),
+                     43))
+      .WillOnce(Return(true));
+  Http::TestRequestHeaderMapImpl headers;
+  HttpTestUtility::addDefaultHeaders(headers);
+  NiceMock<Http::MockAsyncClient> foo_client;
+  NiceMock<Http::MockAsyncClientOngoingRequest> foo_request(&foo_client);
+
+  if (streaming_shadow_) {
+    EXPECT_CALL(*shadow_writer_, streamingShadow_("foo", _, _))
+        .WillOnce(Invoke([&](const std::string&, Http::RequestHeaderMapPtr&,
+                             const Http::AsyncClient::RequestOptions& options) {
+          EXPECT_NE(options.parent_context.stream_info, nullptr);
+          EXPECT_EQ(callbacks_.streamInfo().route(), options.parent_context.stream_info->route());
+          return &foo_request;
+        }));
+  } else {
+    EXPECT_CALL(*shadow_writer_, shadow_("foo", _, _))
+        .WillOnce(Invoke([&](const std::string&, Http::RequestMessagePtr&,
+                             const Http::AsyncClient::RequestOptions& options) {
+          EXPECT_NE(options.parent_context.stream_info, nullptr);
+          EXPECT_EQ(callbacks_.streamInfo().route(), options.parent_context.stream_info->route());
+          return &foo_request;
+        }));
+  }
+
+  const auto should_end_stream = !streaming_shadow_;
+  router_->decodeHeaders(headers, should_end_stream);
+
+  if (streaming_shadow_) {
+    EXPECT_CALL(foo_request, removeWatermarkCallbacks());
+    EXPECT_CALL(foo_request, cancel());
+  }
+
+  router_->onDestroy();
+}
+
 TEST_F(RouterTest, AltStatName) {
   // Also test no upstream timeout here.
   EXPECT_CALL(callbacks_.route_->route_entry_, timeout())
@@ -6760,12 +6842,9 @@ TEST_F(RouterTest, OrcaLoadReport_NoConfiguredMetricNames) {
   ASSERT_EQ(load_metric_stats_map, nullptr);
 }
 
-class TestOrcaLoadReportCallbacks : public Filter::OrcaLoadReportCallbacks {
+class TestOrcaLoadReportLbData : public Upstream::HostLbPolicyData {
 public:
-  MOCK_METHOD(absl::Status, onOrcaLoadReport,
-              (const xds::data::orca::v3::OrcaLoadReport& orca_load_report,
-               const Upstream::HostDescription&),
-              (override));
+  MOCK_METHOD(absl::Status, onOrcaLoadReport, (const Upstream::OrcaLoadReport&), (override));
 };
 
 TEST_F(RouterTest, OrcaLoadReportCallbacks) {
@@ -6781,16 +6860,17 @@ TEST_F(RouterTest, OrcaLoadReportCallbacks) {
   HttpTestUtility::addDefaultHeaders(headers);
   router_->decodeHeaders(headers, true);
 
-  // Configure ORCA callbacks to receive the report.
-  auto callbacks = std::make_shared<TestOrcaLoadReportCallbacks>();
+  // Configure the HostLbData to receive the report.
+  auto host_lb_policy_data = std::make_unique<TestOrcaLoadReportLbData>();
+  auto host_lb_policy_data_raw_ptr = host_lb_policy_data.get();
+  cm_.thread_local_cluster_.conn_pool_.host_->lb_policy_data_ = std::move(host_lb_policy_data);
+
   xds::data::orca::v3::OrcaLoadReport received_orca_load_report;
-  EXPECT_CALL(*callbacks, onOrcaLoadReport(_, _))
-      .WillOnce(Invoke([&](const xds::data::orca::v3::OrcaLoadReport& orca_load_report,
-                           const Upstream::HostDescription&) {
+  EXPECT_CALL(*host_lb_policy_data_raw_ptr, onOrcaLoadReport(_))
+      .WillOnce(Invoke([&](const xds::data::orca::v3::OrcaLoadReport& orca_load_report) {
         received_orca_load_report = orca_load_report;
         return absl::OkStatus();
       }));
-  router_->setOrcaLoadReportCallbacks(callbacks);
 
   // Send ORCA report in the headers.
   xds::data::orca::v3::OrcaLoadReport headers_orca_load_report;
@@ -6833,17 +6913,18 @@ TEST_F(RouterTest, OrcaLoadReportCallbackReturnsError) {
   HttpTestUtility::addDefaultHeaders(headers);
   router_->decodeHeaders(headers, true);
 
-  // Configure ORCA callbacks to receive the report.
-  auto callbacks = std::make_shared<TestOrcaLoadReportCallbacks>();
+  // Configure the HostLbData to receive the report.
+  auto host_lb_policy_data = std::make_unique<TestOrcaLoadReportLbData>();
+  auto host_lb_policy_data_raw_ptr = host_lb_policy_data.get();
+  cm_.thread_local_cluster_.conn_pool_.host_->lb_policy_data_ = std::move(host_lb_policy_data);
+
   xds::data::orca::v3::OrcaLoadReport received_orca_load_report;
-  EXPECT_CALL(*callbacks, onOrcaLoadReport(_, _))
-      .WillOnce(Invoke([&](const xds::data::orca::v3::OrcaLoadReport& orca_load_report,
-                           const Upstream::HostDescription&) {
+  EXPECT_CALL(*host_lb_policy_data_raw_ptr, onOrcaLoadReport(_))
+      .WillOnce(Invoke([&](const xds::data::orca::v3::OrcaLoadReport& orca_load_report) {
         received_orca_load_report = orca_load_report;
         // Return an error that gets logged by router filter.
         return absl::InvalidArgumentError("Unexpected ORCA load Report");
       }));
-  router_->setOrcaLoadReportCallbacks(callbacks);
 
   // Send metrics in the trailers.
   xds::data::orca::v3::OrcaLoadReport orca_load_report;
@@ -6871,11 +6952,12 @@ TEST_F(RouterTest, OrcaLoadReportInvalidHeaderValue) {
   HttpTestUtility::addDefaultHeaders(headers);
   router_->decodeHeaders(headers, true);
 
-  // Configure ORCA callbacks to receive the report, but don't expect it to be
+  // Configure the HostLbData to receive the report, but don't expect it to be
   // called for invalid orca header.
-  auto callbacks = std::make_shared<TestOrcaLoadReportCallbacks>();
-  EXPECT_CALL(*callbacks, onOrcaLoadReport(_, _)).Times(0);
-  router_->setOrcaLoadReportCallbacks(callbacks);
+  auto host_lb_policy_data = std::make_unique<TestOrcaLoadReportLbData>();
+  auto host_lb_policy_data_raw_ptr = host_lb_policy_data.get();
+  cm_.thread_local_cluster_.conn_pool_.host_->lb_policy_data_ = std::move(host_lb_policy_data);
+  EXPECT_CALL(*host_lb_policy_data_raw_ptr, onOrcaLoadReport(_)).Times(0);
 
   // Send report with invalid ORCA proto.
   std::string proto_string = "Invalid ORCA proto value";
